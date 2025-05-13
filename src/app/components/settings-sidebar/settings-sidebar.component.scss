@@ -1,0 +1,23 @@
+.settings-sidebar {
+  width: 240px;
+  padding: 8px 12px;
+  background: #fafafa;
+  border-left: 1px solid #ddd;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 100vh;
+
+  hr {
+    width: 100%;
+  }
+  h3 {
+    margin: 6px 0 2px;
+  }
+  input[type="color"] {
+    width: 100%;
+  }
+  button {
+    padding: 4px 6px;
+  }
+}

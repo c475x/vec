@@ -1,0 +1,5 @@
+<div class="layout">  
+  <app-tool-sidebar (toolSelect)="currentTool=$event"></app-tool-sidebar>  
+  <app-canvas #canvas [tool]="currentTool" class="flex"></app-canvas>  
+  <app-settings-sidebar (delete)="canvas.deleteSelected()"></app-settings-sidebar>  
+</div>  

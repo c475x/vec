@@ -1,0 +1,19 @@
+<nav class="tool-sidebar">
+  <button
+    *ngFor="
+      let t of [
+        Tool.Move,
+        Tool.Pen,
+        Tool.Rect,
+        Tool.Line,
+        Tool.Ellipse,
+        Tool.Text,
+        Tool.Comment
+      ]
+    "
+    [class.active]="selected === t"
+    (click)="select(t)"
+  >
+    {{ t }}
+  </button>
+</nav>

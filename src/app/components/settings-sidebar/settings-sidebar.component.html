@@ -1,0 +1,166 @@
+<aside class="settings-sidebar">
+  <!-- LAYERS + SELECTION -->
+  <ng-container *ngIf="store.selectedIds$ | async as selIds">
+    <h3>Layers</h3>
+    <ol class="layers" *ngIf="store.shapes$ | async as layers">
+      <li
+        *ngFor="let sh of layers; let i = index"
+        [class.selected]="selIds.has(sh.id)"
+        (click)="store.select(sh.id)"
+      >
+        #{{ i }} – {{ sh.type }}
+      </li>
+    </ol>
+
+    <h3>Selection</h3>
+
+    <!-- подробная информация об одиночном объекте -->
+    <ng-container *ngIf="selIds.size === 1; else multiSel">
+      <ng-container *ngFor="let s of store.shapes$ | async">
+        <ng-container *ngIf="selIds.has(s.id)">
+          <p><b>ID:</b> {{ s.id }}</p>
+          <p><b>Type:</b> {{ s.type }}</p>
+          <p *ngIf="s.type === 'rect'"><b>W×H:</b> {{ s.w }} × {{ s.h }}</p>
+          <p *ngIf="s.type === 'ellipse'">
+            <b>Rx,Ry:</b> {{ s.rx }}, {{ s.ry }}
+          </p>
+          <p *ngIf="s.type === 'pen'"><b>Points:</b> {{ s.points.length }}</p>
+        </ng-container>
+      </ng-container>
+    </ng-container>
+    <ng-template #multiSel>
+      <p>{{ selIds.size }} elements selected</p>
+    </ng-template>
+
+    <div *ngIf="selIds.size > 0">
+      <div class="grouping">
+        <button (click)="group()" [disabled]="selIds.size < 2">Group</button>
+        <button (click)="ungroup()">Ungroup</button>
+        <button (click)="merge()" [disabled]="selIds.size < 2">
+          Merge paths
+        </button>
+      </div>
+      <div class="zorder">
+        <button (click)="front()">Bring front</button>
+        <button (click)="back()">Send back</button>
+      </div>
+      <div>
+        <button (click)="deleteSelection()">Delete</button>
+      </div>
+    </div>
+  </ng-container>
+
+  <hr />
+
+  <!-- STROKE -->
+  <div *ngIf="showStroke">
+    <h3>Stroke</h3>
+    <label>
+      Color
+      <input type="color" (change)="onStroke($any($event.target).value)" />
+    </label>
+    <label>
+      Width
+      <input
+        type="number"
+        min="1"
+        max="50"
+        step="1"
+        value="2"
+        (input)="onWidth($any($event.target).valueAsNumber)"
+      />
+    </label>
+  </div>
+
+  <hr *ngIf="showStroke && showFill" />
+
+  <!-- FILL -->
+  <div *ngIf="showFill">
+    <h3>Fill</h3>
+    <label>
+      Color
+      <input type="color" (change)="onFill($any($event.target).value)" />
+    </label>
+  </div>
+
+  <hr *ngIf="showRadius" />
+
+  <!-- RADIUS -->
+  <div *ngIf="showRadius">
+    <h3>Rectangle&nbsp;radius</h3>
+    <input
+      type="range"
+      min="0"
+      max="100"
+      value="0"
+      (input)="onRadius($any($event.target).valueAsNumber)"
+    />
+  </div>
+
+  <hr *ngIf="showShadow" />
+
+  <!-- SHADOW -->
+  <div *ngIf="showShadow">
+    <h3>Shadow</h3>
+    <label>
+      Offset&nbsp;X
+      <input
+        type="number"
+        step="1"
+        (input)="updateShadow('offsetX', $any($event.target).valueAsNumber)"
+      />
+    </label>
+    <label>
+      Offset&nbsp;Y
+      <input
+        type="number"
+        step="1"
+        (input)="updateShadow('offsetY', $any($event.target).valueAsNumber)"
+      />
+    </label>
+    <label>
+      Blur
+      <input
+        type="number"
+        min="0"
+        max="50"
+        (input)="updateShadow('blur', $any($event.target).valueAsNumber)"
+      />
+    </label>
+    <label>
+      Color
+      <input
+        type="color"
+        (change)="updateShadow('color', $any($event.target).value)"
+      />
+    </label>
+  </div>
+  <hr />
+
+  <!-- FILE MENU -->
+  <div class="file-menu">
+    <h3>File</h3>
+
+    <button (click)="exportJSON()">Export&nbsp;JSON</button>
+
+    <label class="btn-like">
+      Import&nbsp;JSON
+      <input
+        type="file"
+        accept=".json"
+        hidden
+        (change)="onImportSelect($event)"
+      />
+    </label>
+
+    <label class="btn-like">
+      Insert&nbsp;Image
+      <input
+        type="file"
+        accept="image/*"
+        hidden
+        (change)="onImageSelect($event)"
+      />
+    </label>
+  </div>
+</aside>
