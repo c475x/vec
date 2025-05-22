@@ -1,42 +1,46 @@
 @font-face {
-  font-family: 'SF Pro Display';
-  font-weight: 400;
-  src: url('/fonts/SF-Pro-Display-Regular.woff') format('woff');
-  font-display: swap;
+    font-family: 'SF Pro Display';
+    font-weight: 400;
+    src: url('/fonts/SF-Pro-Display-Regular.woff') format('woff');
+    font-display: swap;
 }
+
 @font-face {
-  font-family: 'SF Pro Display';
-  font-weight: 600;
-  src: url('/fonts/SF-Pro-Display-Semibold.woff') format('woff');
-  font-display: swap;
+    font-family: 'SF Pro Display';
+    font-weight: 600;
+    src: url('/fonts/SF-Pro-Display-Semibold.woff') format('woff');
+    font-display: swap;
 }
+
 @font-face {
-  font-family: 'SF Pro Display';
-  font-weight: 700;
-  src: url('/fonts/SF-Pro-Display-Bold.woff') format('woff');
-  font-display: swap;
+    font-family: 'SF Pro Display';
+    font-weight: 700;
+    src: url('/fonts/SF-Pro-Display-Bold.woff') format('woff');
+    font-display: swap;
 }
 
 .no-select {
-  user-select: none;
-  -webkit-user-select: none;
-  -moz-user-select: none;
-  -ms-user-select: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
 }
 
 .select {
-  user-select: all;
-  -webkit-user-select: all;
-  -moz-user-select: all;
-  -ms-user-select: all;
+    user-select: all;
+    -webkit-user-select: all;
+    -moz-user-select: all;
+    -ms-user-select: all;
 }
 
-html, body, app-root {
-  margin: 0;
-  padding: 0;
-  height: 100%;
-  overflow: hidden;
-  letter-spacing: 0.02rem;
+html,
+body,
+app-root {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    overflow: hidden;
+    letter-spacing: 0.02rem;
 
-  @extend .no-select;
+    @extend .no-select;
 }

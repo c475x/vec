@@ -1,19 +1,15 @@
 <div class="toolbar">
-  <button
-    *ngFor="let t of tools"
-    (click)="selectTool(t)"
-    [class.active]="t === active"
-    >
-      <img [src]="iconFor(t)" alt="{{ t }}" />
-      <div class="underline" *ngIf="t === active"></div>
+    <button *ngFor="let t of tools" (click)="selectTool(t)" [class.active]="t === active">
+        <img [src]="iconFor(t)" alt="{{ t }}" />
+        <div class="underline" *ngIf="t === active"></div>
     </button>
-  
+
     <div class="spacer"></div>
-  
+
     <button (click)="loadJSON()">
-      <img src="icons/load.svg" alt="load" />
+        <img src="icons/load.svg" alt="load" />
     </button>
     <button (click)="exportJSON()">
-      <img src="icons/save.svg" alt="save" />
+        <img src="icons/save.svg" alt="save" />
     </button>
 </div>

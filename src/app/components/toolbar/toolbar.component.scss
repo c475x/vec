@@ -1,48 +1,48 @@
 .toolbar {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 64px;
-  width: 100%;
-  display: flex;
-  align-items: center;
-  background: rgb(44, 44, 46);
-  z-index: 1000;
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.25);
-
-  .spacer {
-    flex: 1;
-  }
-
-  button {
-    width: 64px;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
     height: 64px;
-    background: transparent;
-    border: none;
-    position: relative;
-    cursor: pointer;
-    padding: 0;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    background: rgb(44, 44, 46);
+    z-index: 1000;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.25);
 
-    img {
-      width: 24px;
-      height: 24px;
-      /* #7B737E */
-      filter: brightness(0) saturate(100%) invert(75%) sepia(7%) saturate(336%) hue-rotate(218deg) brightness(93%) contrast(90%);
+    .spacer {
+        flex: 1;
     }
 
-    &.active img {
-      /* #CC8FE3 */
-      filter: brightness(0) saturate(100%) invert(71%) sepia(48%) saturate(405%) hue-rotate(245deg) brightness(95%) contrast(93%);
-    }
+    button {
+        width: 64px;
+        height: 64px;
+        background: transparent;
+        border: none;
+        position: relative;
+        cursor: pointer;
+        padding: 0;
 
-    .underline {
-      position: absolute;
-      bottom: 12px;
-      left: 20px;
-      right: 20px;
-      height: 2px;
-      background: rgba(204, 143, 227, 0.65);
+        img {
+            width: 24px;
+            height: 24px;
+            /* #7B737E */
+            filter: brightness(0) saturate(100%) invert(75%) sepia(7%) saturate(336%) hue-rotate(218deg) brightness(93%) contrast(90%);
+        }
+
+        &.active img {
+            /* #CC8FE3 */
+            filter: brightness(0) saturate(100%) invert(71%) sepia(48%) saturate(405%) hue-rotate(245deg) brightness(95%) contrast(93%);
+        }
+
+        .underline {
+            position: absolute;
+            bottom: 12px;
+            left: 20px;
+            right: 20px;
+            height: 2px;
+            background: rgba(204, 143, 227, 0.65);
+        }
     }
-  }
 }
