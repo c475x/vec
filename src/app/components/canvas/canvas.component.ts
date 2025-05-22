@@ -8,8 +8,10 @@ import {
     ElementRef,
     HostListener,
     Input,
+    Output,
     ViewChild,
     OnDestroy,
+    EventEmitter,
 } from '@angular/core';
 import { Subscription } from 'rxjs';
 import { Tool } from '../../models/tool.enum';
@@ -38,7 +40,8 @@ interface Bounds {
 })
 export class CanvasComponent implements AfterViewInit, OnDestroy {
     /* ——— входящий активный инструмент ——— */
-    @Input() tool: Tool = Tool.Pen;
+    @Input() tool: Tool = Tool.Move;
+    @Output() toolChange = new EventEmitter<Tool>();
 
     /* ——— ссылка на <canvas> ——— */
     @ViewChild('canvas', { static: true })
@@ -54,6 +57,10 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
     private hoveredShape: Shape | null = null;
     private movingShape: Shape | null = null; // перетаскиваемая фигура
     private moveOffset: Point = { x: 0, y: 0 };
+
+    // для box-selection
+    private marqueeStart: Point | null = null;
+    private marqueeEnd:   Point | null = null;
 
     /* ——— удобный геттер для массива фигур из стора ——— */
     private get shapes(): Shape[] {
@@ -141,6 +148,7 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
             /* === 1. MOVE (select / drag) =============== */
             case Tool.Move: {
                 const target = this.findShape(pos);
+
                 if (target) {
                     e.shiftKey
                         ? this.store.toggle(target.id)
@@ -152,6 +160,9 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
                     };
                 } else {
                     this.store.clearSelection();
+                    this.marqueeStart = pos;
+                    this.marqueeEnd   = pos;
+                    this.redraw();
                 }
                 break;
             }
@@ -241,6 +252,13 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
     mousemove(e: MouseEvent): void {
         const pos = this.pointer(e);
 
+        /* - заканчиваем выделение move tool - */
+        if (this.marqueeStart) {
+            this.marqueeEnd = pos;
+            this.redraw();
+            return;
+          }
+
         /* - проверка, наведен ли курсор на фигуру - */
         if (this.tool === Tool.Move) {
             this.hoveredShape = this.findShape(pos);
@@ -296,11 +314,35 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
     }
 
     mouseup(): void {
+        if (this.marqueeStart && this.marqueeEnd) {
+            const x1 = Math.min(this.marqueeStart.x, this.marqueeEnd.x);
+            const y1 = Math.min(this.marqueeStart.y, this.marqueeEnd.y);
+            const x2 = Math.max(this.marqueeStart.x, this.marqueeEnd.x);
+            const y2 = Math.max(this.marqueeStart.y, this.marqueeEnd.y);
+
+            // найдем все фигуры, чьи границы пересекаются с рамкой
+            const inMarquee = this.shapes
+                .filter(s => {
+                    const b = this.getBounds(s);
+                    return !(b.right < x1 || b.left > x2 || b.bottom < y1 || b.top > y2);
+                })
+                .map(s => s.id);
+
+            // выделяем их
+            this.store.selectedIds$.next(new Set(inMarquee));
+        }
+
+        this.marqueeStart = this.marqueeEnd = null;
         this.drawing = false;
         this.movingShape = null;
         this.activeHandle = null;
         this.resizeOrigin = null;
         this.initialShapeCopy = null;
+
+        // сбрасываем инструмент обратно к move
+        this.tool = Tool.Move;
+        this.toolChange.emit(this.tool);
+
         this.redraw();
     }
 
@@ -313,6 +355,11 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
             this.initialShapeCopy = null;
             this.redraw();
         }
+
+        if (this.marqueeStart) {
+            this.marqueeStart = this.marqueeEnd = null;
+            this.redraw();
+        }
     }
 
     /* ─────────────────────────────────────────── */
@@ -322,7 +369,26 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
         const cvs = this.canvasRef.nativeElement;
         this.ctx.clearRect(0, 0, cvs.width, cvs.height);
 
+        // рисуем все фигуры
         for (const s of this.shapes) this.drawShape(s);
+
+        // рисуем выделение
+        if (this.marqueeStart && this.marqueeEnd) {
+            const x = Math.min(this.marqueeStart.x, this.marqueeEnd.x);
+            const y = Math.min(this.marqueeStart.y, this.marqueeEnd.y);
+            const w = Math.abs(this.marqueeEnd.x - this.marqueeStart.x);
+            const h = Math.abs(this.marqueeEnd.y - this.marqueeStart.y);
+        
+            this.ctx.save();
+            this.ctx.lineWidth = 2;
+            this.ctx.strokeStyle = '#0c8ce9';
+            this.ctx.fillStyle = 'rgba(12,140,233,0.12)';
+            this.ctx.setLineDash([]);
+            this.ctx.strokeRect(x, y, w, h);
+            this.ctx.fillRect(x, y, w, h);
+            this.ctx.restore();
+            return; // не рисуем hover/bb пока marquee активна
+        }
 
         const sel = [...this.store.selectedIds$.value];
         // не рисуем hover, если выбранно несколько объектов

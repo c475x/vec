@@ -1,4 +1,4 @@
-import { Component, EventEmitter, Output } from '@angular/core';
+import { Component, EventEmitter, Input, Output } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Tool } from '../../models/tool.enum';
 import { CanvasStore } from '../../services/canvas.store';
@@ -11,9 +11,10 @@ import { CanvasStore } from '../../services/canvas.store';
     styleUrl: './toolbar.component.scss'
 })
 export class ToolbarComponent {
-    constructor(private store: CanvasStore) { }
+    @Input()  active: Tool = Tool.Move;
+    @Output() toolChange = new EventEmitter<Tool>();
 
-    @Output() toolSelect = new EventEmitter<Tool>();
+    constructor(private store: CanvasStore) { }
 
     tools = [
         Tool.Move,
@@ -25,11 +26,9 @@ export class ToolbarComponent {
         Tool.Comment
     ];
 
-    active: Tool = Tool.Move;
-
     selectTool(t: Tool) {
         this.active = t;
-        this.toolSelect.emit(t);
+        this.toolChange.emit(t);
     }
 
     iconFor(tool: Tool): string {
@@ -64,6 +63,41 @@ export class ToolbarComponent {
             };
             rdr.readAsText(file);
         };
+        input.click();
+    }
+
+    importImage(): void {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+
+        input.onchange = () => {
+            const file = input.files?.[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = () => {
+                const src = reader.result as string;
+                const img = new Image();
+                img.onload = () => {
+                    const shape: any = {
+                        id: Date.now(),
+                        type: 'image',
+                        x: 50,
+                        y: 50,
+                        w: img.width,
+                        h: img.height,
+                        src,
+                        _img: img
+                    };
+                    this.store.updateShapes(arr => arr.push(shape));
+                    this.store.select(shape.id);
+                };
+                img.src = src;
+            };
+            reader.readAsDataURL(file);
+        };
+
         input.click();
     }
 }
