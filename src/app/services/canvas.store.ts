@@ -12,8 +12,13 @@ export class CanvasStore {
   /* стиль, который получит КАЖДАЯ новая фигура,  
      если на холсте сейчас ничего не выделено        */
   readonly activeStyle$ = new BehaviorSubject<ShapeStyle>({
-    stroke: '#2c3e50',
+    stroke: '#000000',
+    fill: '#d9d9d9',
     lineWidth: 2,
+    fillEnabled: true,
+    strokeEnabled: false,
+    alpha: 1,
+    shadow: { offsetX: 0, offsetY: 0, blur: 0, color: '#000000' }
   });
 
   /* выбранный инструмент (нужен сайдбару, чтобы  
@@ -78,7 +83,7 @@ export class CanvasStore {
         id: Date.now(), // простая «уникальность»
         type: 'group',
         children,
-        style: { stroke: '#2c3e50', lineWidth: 1 },
+        style: { fill: '#d9d9d9' },
       };
       this.selectedIds$.next(new Set([group.id]));
       arr.splice(0, arr.length, ...others, group);
@@ -124,20 +129,42 @@ export class CanvasStore {
   }
 
   /* ——— порядок слоёв ——— */
+  // bringToFront() {
+  //   const ids = this.selectedIds$.value;
+  //   this.updateShapes((arr) => {
+  //     const picked = arr.filter((s) => ids.has(s.id));
+  //     const others = arr.filter((s) => !ids.has(s.id));
+  //     arr.splice(0, arr.length, ...others, ...picked);
+  //   });
+  // }
+  // sendToBack() {
+  //   const ids = this.selectedIds$.value;
+  //   this.updateShapes((arr) => {
+  //     const picked = arr.filter((s) => ids.has(s.id));
+  //     const others = arr.filter((s) => !ids.has(s.id));
+  //     arr.splice(0, arr.length, ...picked, ...others);
+  //   });
+  // }
+
   bringToFront() {
     const ids = this.selectedIds$.value;
-    this.updateShapes((arr) => {
-      const picked = arr.filter((s) => ids.has(s.id));
-      const others = arr.filter((s) => !ids.has(s.id));
-      arr.splice(0, arr.length, ...others, ...picked);
+    this.updateShapes(arr => {
+      for (let i = arr.length - 2; i >= 0; i--) {
+        if (ids.has(arr[i].id) && !ids.has(arr[i + 1].id)) {
+          [arr[i], arr[i + 1]] = [arr[i + 1], arr[i]];
+        }
+      }
     });
   }
+
   sendToBack() {
     const ids = this.selectedIds$.value;
-    this.updateShapes((arr) => {
-      const picked = arr.filter((s) => ids.has(s.id));
-      const others = arr.filter((s) => !ids.has(s.id));
-      arr.splice(0, arr.length, ...picked, ...others);
+    this.updateShapes(arr => {
+      for (let i = 1; i < arr.length; i++) {
+        if (ids.has(arr[i].id) && !ids.has(arr[i - 1].id)) {
+          [arr[i], arr[i - 1]] = [arr[i - 1], arr[i]];
+        }
+      }
     });
   }
 }

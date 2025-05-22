@@ -1,0 +1,9 @@
+<div class="color-row">
+    <span class="label">{{ label }}</span>
+    <div class="controls">
+        <span class="hex select">{{ color }}</span>
+        <img *ngIf="!fixed" class="eye-icon" [src]="visible ? 'icons/visible.svg' : 'icons/hidden.svg'"
+        (click)="toggleVisible.emit(!visible)" />
+        <div class="color-box" (click)="openPicker()" [style.background]="color"></div>
+    </div>
+</div>

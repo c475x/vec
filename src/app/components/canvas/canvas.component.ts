@@ -1,6 +1,6 @@
 /*  src/app/components/canvas/canvas.component.ts
  *  «сердце» редактора: рисование, выделение, перетаскивание
- *  и отрисовка Canvas‑сцены.  Работает вместе с CanvasStore.
+ *  и отрисовка Canvas‑сцены. Работает вместе с CanvasStore.
  */
 import {
   AfterViewInit,
@@ -48,9 +48,11 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
   /* ——— приватные состояния ——— */
   private ctx!: CanvasRenderingContext2D;
   private sub!: Subscription; // подписка на поток фигур
+  private selSub!: Subscription;
 
   private drawing = false; // сейчас рисуем?
   private startPoint!: Point; // первая точка drag‑а
+  private hoveredShape: Shape | null = null;
   private movingShape: Shape | null = null; // перетаскиваемая фигура
   private moveOffset: Point = { x: 0, y: 0 };
 
@@ -71,6 +73,7 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
   /* ─────────────────────────────────────────── */
   ngAfterViewInit(): void {
     const canvas = this.canvasRef.nativeElement;
+
     canvas.width = canvas.offsetWidth;
     canvas.height = canvas.offsetHeight;
 
@@ -81,7 +84,16 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
     this.ctx.lineJoin = 'round';
 
     /* при любом изменении массива фигур – перерисовываем сцену */
-    this.sub = this.store.shapes$.subscribe(() => this.redraw());
+    this.sub = this.store.shapes$.subscribe(() => {
+      // если ранее наведённый объект уже удалён — сбросим hover
+      if (this.hoveredShape && !this.shapes.find(s => s.id === this.hoveredShape!.id)) {
+        this.hoveredShape = null;
+      }
+      this.redraw();
+    });
+
+    /* также перерисовываем при изменении выделения */
+    this.selSub = this.store.selectedIds$.subscribe(() => this.redraw());
 
     /* стартовая очистка */
     this.redraw();
@@ -89,6 +101,7 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.sub?.unsubscribe();
+    this.selSub?.unsubscribe();
   }
 
   /** Удаляет все выбранные фигуры */
@@ -144,47 +157,83 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
         break;
       }
 
-      /* === 2. свободный контур =================== */
+      /* === 2. pen tool =================== */
       case Tool.Pen: {
         this.drawing = true;
         const pen: PrimitiveShape = {
           id: Date.now(),
           type: 'pen',
           points: [pos],
-          style: { ...this.store.activeStyle$.value },
+          
+          style: { ...this.store.activeStyle$.value, fill: '#000000', stroke: '#ffffff', fillEnabled: false, strokeEnabled: true },
         };
         this.store.updateShapes((arr) => arr.push(pen));
+        this.store.select(pen.id);
         break;
       }
 
       /* === 3. фигуры, создаваемые drag‑ом ========= */
       case Tool.Rect:
-      case Tool.Line:
       case Tool.Ellipse: {
         this.drawing = true;
         const shape = this.initialShapeForDrag(pos);
+        shape.style = { ...this.store.activeStyle$.value };
+        if (this.tool === Tool.Rect) shape.style.radius = 0;
+
         this.store.updateShapes((arr) => arr.push(shape));
+        this.store.select(shape.id);
+        break;
+      }
+      case Tool.Line: {
+        this.drawing = true;
+        const line: PrimitiveShape = {
+          id: Date.now(),
+          type: 'line',
+          x1: pos.x, y1: pos.y,
+          x2: pos.x, y2: pos.y,
+          style: { ...this.store.activeStyle$.value, fill: '#000000', stroke: '#ffffff', fillEnabled: false, strokeEnabled: true },
+        };
+        this.store.updateShapes(arr => arr.push(line));
+        this.store.select(line.id);
         break;
       }
 
-      /* === 4. однократные (Text/Comment) ========= */
+      /* === 4. текст ========= */
       case Tool.Text:
-      case Tool.Comment: {
-        const label =
-          this.tool === Tool.Text ? 'Введите текст:' : 'Комментарий:';
-        const txt = prompt(label);
+      {
+        const txt = prompt('Enter text:');
         if (!txt) return;
 
         const shape: PrimitiveShape = {
           id: Date.now(),
-          type: this.tool === Tool.Text ? 'text' : 'comment',
+          type: 'text',
           x: pos.x,
           y: pos.y,
           text: txt,
-          style: { stroke: '#000', fill: '#000', lineWidth: 1 },
+          style: { ...this.store.activeStyle$.value },
         } as any;
 
         this.store.updateShapes((arr) => arr.push(shape));
+        this.store.select(shape.id);
+        break;
+      }
+
+      /* === 5. комментарий ========= */
+      case Tool.Comment:
+      {
+        const txt = prompt('Enter comment:');
+        if (!txt) return;
+
+        const shape: PrimitiveShape = {
+          id: Date.now(),
+          type: 'comment',
+          x: pos.x,
+          y: pos.y,
+          text: txt,
+        } as any;
+
+        this.store.updateShapes((arr) => arr.push(shape));
+        this.store.select(shape.id);
         break;
       }
     }
@@ -192,6 +241,13 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
 
   mousemove(e: MouseEvent): void {
     const pos = this.pointer(e);
+
+    /* - проверка, наведен ли курсор на фигуру - */
+    if (this.tool === Tool.Move) {
+      this.hoveredShape = this.findShape(pos);
+      this.redraw();
+    }
+
     /* === процесс изменения размера === */
     if (this.activeHandle && this.resizeOrigin) {
       const id = [...this.store.selectedIds$.value][0];
@@ -246,9 +302,18 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
     this.activeHandle = null;
     this.resizeOrigin = null;
     this.initialShapeCopy = null;
+    this.redraw();
   }
+  
   mouseleave(): void {
-    this.mouseup();
+    if (this.drawing) {
+      this.movingShape = null;
+      this.hoveredShape = null;
+      this.activeHandle = null;
+      this.resizeOrigin = null;
+      this.initialShapeCopy = null;
+      this.redraw();
+    }
   }
 
   /* ─────────────────────────────────────────── */
@@ -259,12 +324,67 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
     this.ctx.clearRect(0, 0, cvs.width, cvs.height);
 
     for (const s of this.shapes) this.drawShape(s);
-    /* ─ рамка выбора ─ */
-    const ids = [...this.store.selectedIds$.value];
-    if (ids.length === 1) {
-      const shp = this.shapes.find((s) => s.id === ids[0]);
-      if (shp) this.drawBoundingBox(shp);
+
+    const sel = [...this.store.selectedIds$.value];
+    // не рисуем hover, если выбранно несколько объектов
+    if (!this.movingShape && this.hoveredShape && sel.length <= 1) {
+      this.drawHoverOutline(this.hoveredShape);
     }
+
+    // рамка выделения
+    if (!this.movingShape && sel.length>0) {
+      if (sel.length===1) {
+        const shp = this.shapes.find(s=>s.id===sel[0])!;
+        this.drawBoundingBox(shp);
+      } else {
+        const allBounds = sel.map(id=>this.getBounds(this.shapes.find(s=>s.id===id)!));
+        const u = allBounds.reduce((u,b)=>({
+          left:Math.min(u.left,b.left),
+          top:Math.min(u.top,b.top),
+          right:Math.max(u.right,b.right),
+          bottom:Math.max(u.bottom,b.bottom),
+        }), allBounds[0]);
+        this.drawBoundingBoxUnion(u);
+      }
+    }
+  }
+
+  private drawBoundingBoxUnion(b: Bounds): void {
+    this.ctx.save();
+    this.ctx.strokeStyle = '#0c8ce9';
+    this.ctx.lineWidth = 2;
+    this.ctx.setLineDash([]);
+    this.ctx.strokeRect(b.left, b.top, b.right - b.left, b.bottom - b.top);
+  
+    // подпись по центру и с двумя знаками
+    const W = +((b.right - b.left).toFixed(2));
+    const H = +((b.bottom - b.top).toFixed(2));
+    const label = `${W} × ${H}`;
+    this.ctx.font = '11px "SF Pro Display"';
+    const textW = this.ctx.measureText(label).width;
+    const boxW = textW + 8, boxH = 18;
+    const x0 = b.left + ((b.right - b.left) - boxW)/2;
+    const y0 = b.bottom + 6;
+    // фон скруглённый
+    const r = 2;
+    this.ctx.fillStyle = '#0c8ce9';
+    this.ctx.beginPath();
+    this.ctx.moveTo(x0 + r, y0);
+    this.ctx.lineTo(x0 + boxW - r, y0);
+    this.ctx.quadraticCurveTo(x0 + boxW, y0, x0 + boxW, y0 + r);
+    this.ctx.lineTo(x0 + boxW, y0 + boxH - r);
+    this.ctx.quadraticCurveTo(x0 + boxW, y0 + boxH, x0 + boxW - r, y0 + boxH);
+    this.ctx.lineTo(x0 + r, y0 + boxH);
+    this.ctx.quadraticCurveTo(x0, y0 + boxH, x0, y0 + boxH - r);
+    this.ctx.lineTo(x0, y0 + r);
+    this.ctx.quadraticCurveTo(x0, y0, x0 + r, y0);
+    this.ctx.closePath();
+    this.ctx.fill();
+    // текст
+    this.ctx.fillStyle = '#fff';
+    this.ctx.textBaseline = 'middle';
+    this.ctx.fillText(label, x0 + (boxW - textW)/2, y0 + boxH/2);
+    this.ctx.restore();
   }
 
   private drawShape(shape: Shape): void {
@@ -275,16 +395,22 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
     const s = shape as PrimitiveShape;
 
     const st: ShapeStyle = {
-      stroke: '#000',
-      fill: 'transparent',
+      stroke: 'transparent',
+      fill: '#d9d9d9',
       lineWidth: 2,
+      alpha: 1,
+      fillEnabled: true,
+      strokeEnabled: false,
       ...(s.style ?? {}),
     };
 
+    /* устанавливаем прозрачность */
+    this.ctx.globalAlpha = st.alpha ?? 1;
+
     /* — применяем stroke‑параметры — */
     this.ctx.lineWidth = st.lineWidth ?? 2;
-    this.ctx.strokeStyle = st.stroke ?? '#000';
-    this.ctx.fillStyle = st.fill ?? 'transparent';
+    this.ctx.strokeStyle = st.strokeEnabled && st.stroke ? st.stroke : 'transparent';
+    this.ctx.fillStyle = st.fillEnabled && st.fill ? st.fill : 'transparent';
 
     /* shadow */
     if (st.shadow) {
@@ -377,6 +503,8 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
         break;
       }
     }
+
+    this.ctx.globalAlpha = 1;
   }
 
   /* ─────────────────────────────────────────── */
@@ -425,7 +553,15 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
   private findShape(p: Point): Shape | null {
     for (let i = this.shapes.length - 1; i >= 0; i--) {
       const s = this.shapes[i];
+      const tol = (s as PrimitiveShape).style?.lineWidth! / 2 + 5; // tolerance - 5px + stroke (если есть)
+      // для каждой фигуры проверяем попадание в геометрию + расширяем тест на tol
       if (this.pointInsideShape(p, s)) return s;
+      // затем тестируем смещения по окр. контуру
+      const angles = [0, Math.PI/2, Math.PI, 3*Math.PI/2];
+      for (const th of angles) {
+        const testP = { x: p.x + Math.cos(th)*tol, y: p.y + Math.sin(th)*tol };
+        if (this.pointInsideShape(testP, s)) return s;
+      }
     }
     return null;
   }
@@ -582,13 +718,49 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
   private drawBoundingBox(s: Shape): void {
     const b = this.getBounds(s);
     this.ctx.save();
-    this.ctx.strokeStyle = '#3498db';
-    this.ctx.lineWidth = 1;
-    this.ctx.setLineDash([4, 2]);
+
+    /* сброс тени */
+    this.ctx.shadowBlur=0; this.ctx.shadowOffsetX=0; this.ctx.shadowOffsetY=0; this.ctx.shadowColor='transparent';
+
+    this.ctx.strokeStyle = '#0c8ce9';
+    this.ctx.lineWidth = 2;
     this.ctx.strokeRect(b.left, b.top, b.right - b.left, b.bottom - b.top);
-    this.ctx.setLineDash([]);
+
+    // подпись размеров [W x H]
+    const W = +((b.right - b.left).toFixed(2));
+    const H = +((b.bottom - b.top).toFixed(2));
+    const label = `${W} × ${H}`;
+    this.ctx.font = '11px "SF Pro Display"';
+    const textMetrics = this.ctx.measureText(label);
+    const textW = textMetrics.width;
+    const boxW = textW + 8; // 4px по бокам
+    const boxH = 18;
+    const x = b.left + (W - boxW)/2;  // центрируем по ширине
+    const y = b.bottom + 6;           // от рамки вниз на 6px
+
+    // фон
+    const r = 4; // радиус скругления
+    this.ctx.fillStyle = '#0c8ce9';
+    this.ctx.beginPath();
+    this.ctx.moveTo(x + r, y);
+    this.ctx.lineTo(x + boxW - r, y);
+    this.ctx.quadraticCurveTo(x + boxW, y, x + boxW, y + r);
+    this.ctx.lineTo(x + boxW, y + boxH - r);
+    this.ctx.quadraticCurveTo(x + boxW, y + boxH, x + boxW - r, y + boxH);
+    this.ctx.lineTo(x + r, y + boxH);
+    this.ctx.quadraticCurveTo(x, y + boxH, x, y + boxH - r);
+    this.ctx.lineTo(x, y + r);
+    this.ctx.quadraticCurveTo(x, y, x + r, y);
+    this.ctx.closePath();
+    this.ctx.fill();
+
+    // текст
+    this.ctx.fillStyle = '#fff';
+    this.ctx.textBaseline = 'middle';
+    this.ctx.fillText(label, x + boxW/2 - textW/2, y + boxH/2 + 1);
 
     /* ручки */
+    this.ctx.lineWidth = 1;
     const hs = this.HANDLE;
     const half = hs / 2;
     const pts = [
@@ -599,11 +771,63 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
     ] as const;
 
     this.ctx.fillStyle = '#fff';
-    this.ctx.strokeStyle = '#3498db';
+    this.ctx.strokeStyle = '#0c8ce9';
     pts.forEach((pt) => {
       this.ctx.fillRect(pt.x - half, pt.y - half, hs, hs);
       this.ctx.strokeRect(pt.x - half, pt.y - half, hs, hs);
     });
+    this.ctx.restore();
+  }
+
+  /* обводка при наведении на объект */
+  private drawHoverOutline(shape: Shape): void {
+    this.ctx.save();
+    this.ctx.lineWidth = 2;
+    this.ctx.strokeStyle = '#0c8ce9';
+    this.ctx.setLineDash([]);
+    this.ctx.globalAlpha = 1;
+
+    // отключаем тень
+    this.ctx.shadowBlur = this.ctx.shadowOffsetX = this.ctx.shadowOffsetY = 0;
+
+    // рисуем по типу shape, аналогично drawShape но только stroke и без fill
+    switch (shape.type) {
+      case 'rect':
+        this.roundRectPath(shape.x, shape.y, shape.w, shape.h, shape.style.radius || 0);
+        this.ctx.stroke();
+        break;
+      case 'ellipse':
+        this.ctx.beginPath();
+        this.ctx.ellipse(
+          shape.x + shape.rx,
+          shape.y + shape.ry,
+          Math.abs(shape.rx),
+          Math.abs(shape.ry),
+          0,
+          0,
+          Math.PI * 2
+        );
+        this.ctx.stroke();
+        break;
+      case 'line':
+        this.ctx.beginPath();
+        this.ctx.moveTo(shape.x1, shape.y1);
+        this.ctx.lineTo(shape.x2, shape.y2);
+        this.ctx.stroke();
+        break;
+      case 'pen':
+        this.ctx.beginPath();
+        shape.points.forEach((pt, i) => i ? this.ctx.lineTo(pt.x, pt.y) : this.ctx.moveTo(pt.x, pt.y));
+        this.ctx.stroke();
+        break;
+      case 'image':
+      case 'text':
+      case 'comment':
+        // для текста/комментариев просто повторим bounding box
+        const b = this.getBounds(shape);
+        this.ctx.strokeRect(b.left, b.top, b.right-b.left, b.bottom-b.top);
+        break;
+    }
     this.ctx.restore();
   }
 
@@ -671,7 +895,7 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
     const newW = Math.max(10, oB.right - oB.left + dx * signX); // не даём сжать <10 px
     const newH = Math.max(10, oB.bottom - oB.top + dy * signY);
 
-    /* коэффициенты масштабирования (можно пригодиться для будущих типов) */
+    /* коэффициенты масштабирования (могут пригодиться для будущих типов) */
     const kx = newW / (oB.right - oB.left);
     const ky = newH / (oB.bottom - oB.top);
 
@@ -736,7 +960,9 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
           break;
       }
     };
+
     apply(s);
+    this.store.shapes$.next(this.store.shapes$.value);
   }
 
   private getShapeLeft(s: Shape): number {
@@ -816,11 +1042,15 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
   @HostListener('window:resize')
   onResize(): void {
     const cvs = this.canvasRef.nativeElement;
+    // сохраняем старый контекст
     const temp = document.createElement('canvas');
     temp.width = cvs.width;
     temp.height = cvs.height;
     temp.getContext('2d')?.drawImage(cvs, 0, 0);
 
+    // пересчитываем, убирая тулбар
+    const TOOLBAR_HEIGHT = 64;
+    const h = cvs.offsetHeight - TOOLBAR_HEIGHT;
     cvs.width = cvs.offsetWidth;
     cvs.height = cvs.offsetHeight;
 

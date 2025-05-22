@@ -1,0 +1,18 @@
+.section {
+  padding: 16px 16px 8px 16px;
+  box-sizing: border-box;
+
+  .section-title {
+    font-family: 'SF Pro Display';
+    font-weight: 700;
+    font-size: 16px;
+    color: #F5F5F5;
+    margin-bottom: 16px;
+  }
+
+  .section-content {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+}

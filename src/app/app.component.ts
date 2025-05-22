@@ -1,16 +1,23 @@
 import { Component } from '@angular/core';
 import { CanvasComponent } from './components/canvas/canvas.component';
 import { Tool } from './models/tool.enum';
-import { ToolSidebarComponent } from './components/tool-sidebar/tool-sidebar.component';
-import { SettingsSidebarComponent } from './components/settings-sidebar/settings-sidebar.component';
+import { ToolbarComponent } from './components/toolbar/toolbar.component';
+import { LeftSidebarComponent } from './components/left-sidebar/left-sidebar.component';
+import { RightSidebarComponent } from './components/right-sidebar/right-sidebar.component';
 
 @Component({
   selector: 'app-root',
-  imports: [CanvasComponent, ToolSidebarComponent, SettingsSidebarComponent],
+  standalone: true,
+  imports: [
+    ToolbarComponent,
+    LeftSidebarComponent, 
+    CanvasComponent, 
+    RightSidebarComponent
+  ],
   templateUrl: './app.component.html',
   styleUrl: './app.component.scss'
 })
 export class AppComponent {
   title = 'vector-studio';
-  currentTool: Tool = Tool.Pen;  
+  currentTool: Tool = Tool.Move;  
 }

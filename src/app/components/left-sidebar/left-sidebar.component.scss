@@ -1,0 +1,23 @@
+:host {
+    position: fixed;
+    top: 64px;
+    left: 0;
+    width: 242px;
+    bottom: 0;
+    background: #2c2c2e;
+    overflow-y: scroll;
+    scrollbar-color: #ea9fea #2c2c2e;
+    scrollbar-width: thin;
+}
+
+app-section {
+    padding: 0;
+}
+
+.placeholder {
+    font-family: 'SF Pro Display';
+    font-weight: 600;
+    font-size: 12px;
+    color: #7E7E7E;
+    margin-top: 0px;
+}

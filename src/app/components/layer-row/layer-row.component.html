@@ -1,0 +1,18 @@
+<div
+    class="layer-row"
+    [class.selected]="selected"
+    (click)="clickRow.emit($event)"
+    (dblclick)="startRename()"
+>
+    <ng-container *ngIf="!editing; else editTpl">
+        <span class="idx">{{ index }}</span>
+        <span class="title">{{ name }}</span>
+    </ng-container>
+    <ng-template #editTpl>
+        <input
+            #inputEl
+            [value]="name"
+            (keydown)="onKeydown($event)"
+        />
+    </ng-template>
+</div>

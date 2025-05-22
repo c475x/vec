@@ -1,7 +1,18 @@
 .layout {
+  position: absolute;
+  top: 64px;    /* под тулбаром */
+  left: 242px;  /* правый край левой панели */
+  right: 242px; /* левый край правой панели */
+  bottom: 0;
   display: flex;
-  height: 100vh;
+  overflow: hidden;
 }
+
 .flex {
   flex: 1;
+}
+
+app-canvas {
+  flex: 1;
+  display: block;
 }

@@ -1,0 +1,12 @@
+<app-section title="Layers">
+    <ng-container *ngIf="(shapesReversed$ | async)?.length; else noLayers">
+        <ng-container *ngIf="selectedIds$ | async as sel">
+            <app-layer-row *ngFor="let s of shapesReversed$ | async; let idx = index" [index]="idx + 1"
+                [name]="layerNames[s.id] || defaultNames[s.id]" [selected]="sel.has(s.id)"
+                (clickRow)="onLayerClick(s.id, $event)" (rename)="onLayerRename(s.id, $event)"></app-layer-row>
+        </ng-container>
+    </ng-container>
+    <ng-template #noLayers>
+        <p class="placeholder">No layers</p>
+    </ng-template>
+</app-section>

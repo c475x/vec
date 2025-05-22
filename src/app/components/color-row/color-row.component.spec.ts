@@ -1,18 +1,18 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 
-import { ToolSidebarComponent } from './tool-sidebar.component';
+import { ColorRowComponent } from './color-row.component';
 
-describe('ToolSidebarComponent', () => {
-  let component: ToolSidebarComponent;
-  let fixture: ComponentFixture<ToolSidebarComponent>;
+describe('ColorRowComponent', () => {
+  let component: ColorRowComponent;
+  let fixture: ComponentFixture<ColorRowComponent>;
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
-      imports: [ToolSidebarComponent]
+      imports: [ColorRowComponent]
     })
     .compileComponents();
 
-    fixture = TestBed.createComponent(ToolSidebarComponent);
+    fixture = TestBed.createComponent(ColorRowComponent);
     component = fixture.componentInstance;
     fixture.detectChanges();
   });
