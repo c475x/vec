@@ -120,6 +120,18 @@
             </ng-container>
         </ng-container>
     </ng-template>
+
+    <!-- Экспорт -->
+    <ng-container *ngIf="(shapes$ | async)!.length > 0">
+        <app-section title="Export">
+            <app-action-row label="Export PNG" (action)="exportAs('png')"
+            [disabled]="false"></app-action-row>
+            <app-action-row label="Export JPG" (action)="exportAs('jpg')"
+            [disabled]="false"></app-action-row>
+            <app-action-row label="Export SVG" (action)="exportAs('svg')"
+            [disabled]="false"></app-action-row>
+        </app-section>
+    </ng-container>
 </ng-container>
 
 <ng-template #placeholder>

@@ -5,7 +5,9 @@
     width: 242px;
     bottom: 0;
     background: #2c2c2e;
-    overflow: hidden;
+    overflow-y: scroll;
+    scrollbar-color: #7a7a7c #2c2c2e;
+    scrollbar-width: thin;
 }
 
 app-section {

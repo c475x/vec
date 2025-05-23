@@ -38,21 +38,21 @@ export class PropertyRowComponent implements OnChanges {
             inp.focus();
             inp.select();
         }, 10);
-        console.log('[PropertyRow] startEdit:', this.label, this.displayValue);
+        // console.log('[property-row] startEdit:', this.label, this.displayValue);
     }
 
     finishEdit(): void {
         // если snapshot триггера отличается от текущего - другая фигура была выделена при изменении значения
         if (this.resetTrigger !== this.lastResetTrigger) {
             this.cancelEdit();
-            console.log(`[PropertyRow] edit cancelled for ${this.label} due to trigger mismatch`);
+            // console.log(`[property-row] edit cancelled for ${this.label} due to trigger mismatch`);
             return;
         }
         if (this.editing) {
             this.editing = false;
             this.valueChange.emit(this.displayValue);
-            console.log(`[PropertyRow] valueChange emitted for ${this.label} =`, this.displayValue);
-            console.log(`[PropertyRow] resetTrigger: ${this.resetTrigger}, lastResetTrigger: ${this.lastResetTrigger}`);
+            // console.log(`[property-row] valueChange emitted for ${this.label} =`, this.displayValue);
+            // console.log(`[property-row] resetTrigger: ${this.resetTrigger}, lastResetTrigger: ${this.lastResetTrigger}`);
         }
     }
 
@@ -78,6 +78,6 @@ export class PropertyRowComponent implements OnChanges {
     private cancelEdit(): void {
         this.editing = false;
         this.displayValue = this.value;
-        console.log('cancel edit');
+        // console.log('cancel edit');
     }
 }

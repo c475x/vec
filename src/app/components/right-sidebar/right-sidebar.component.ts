@@ -1,4 +1,4 @@
-import { Component } from '@angular/core';
+import { AfterViewInit, Component, ElementRef, ViewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { SectionComponent } from '../section/section.component';
 import { PropertyRowComponent } from '../property-row/property-row.component';
@@ -7,7 +7,7 @@ import { ActionRowComponent } from '../action-row/action-row.component';
 import { CanvasStore } from '../../services/canvas.store';
 import { Observable, combineLatest } from 'rxjs';
 import { map, take } from 'rxjs/operators';
-import { Shape, PrimitiveShape, ShapeStyle, GroupShape } from '../../models/shape.model';
+import { Shape, ShapeStyle, GroupShape, PrimitiveShape } from '../../models/shape.model';
 
 @Component({
     selector: 'app-right-sidebar',
@@ -28,6 +28,10 @@ export class RightSidebarComponent {
     activeStyle$!: Observable<ShapeStyle>;
     singleShape$!: Observable<Shape | null>;
     singleStyle$!: Observable<ShapeStyle>;
+
+    // для экспорта
+    @ViewChild('exportCanvasContainer', { static: true, read: ElementRef })
+    exportContainer!: ElementRef; // не обязательно, можно найти canvas через querySelector
 
     // поля для position
     canvasX$!: Observable<number>;
@@ -241,5 +245,175 @@ export class RightSidebarComponent {
                     }
                 });
             });
+    }
+
+    /** экспорт холста в указанный формат */
+    exportAs(format: 'png' | 'jpg' | 'svg'): void {
+        // cохраняем текущее выделение
+        const savedSel = new Set(this.store.selectedIds$.value);
+
+        // прячем bounding-boxes/hover и скрываем комментарии
+        this.store.selectedIds$.next(new Set());
+        this.store.hideComments$.next(true);
+
+        // подождать, чтобы CanvasComponent успел перерисовать без рамок
+        setTimeout(() => {
+            // находим оригинальный canvas
+            const orig = document.querySelector('app-canvas canvas') as HTMLCanvasElement;
+            if (!orig) {
+                // восстанавливаем выделение, если канвас не найден
+                this.store.hideComments$.next(false);
+                this.store.selectedIds$.next(savedSel);
+                return;
+            }
+
+            // есть ли выделение
+            const hasSelection = savedSel.size > 0;
+
+            let targetCanvas: HTMLCanvasElement;
+
+            if (!hasSelection) {
+                // экспорт всего холста
+                targetCanvas = orig;
+            } else {
+                // экспорт только выделенной области
+                const shapes = this.store.shapes$.value
+                    .filter(s => savedSel.has(s.id) && s.type !== 'comment');
+                if (shapes.length === 0) {
+                    targetCanvas = orig;
+                } else {
+                const bboxes = shapes.map(s => this.getBounds(s));
+                const union = bboxes.reduce((u, b) => ({
+                    left:   Math.min(u.left,   b.left),
+                    top:    Math.min(u.top,    b.top),
+                    right:  Math.max(u.right,  b.right),
+                    bottom: Math.max(u.bottom, b.bottom),
+                }), bboxes[0]);
+
+                const sw = union.right - union.left;
+                const sh = union.bottom - union.top;
+
+                // создаём offscreen canvas
+                targetCanvas = document.createElement('canvas');
+                targetCanvas.width = sw;
+                targetCanvas.height = sh;
+                const ctx = targetCanvas.getContext('2d')!;
+                ctx.drawImage(
+                    orig,
+                    union.left, union.top, sw, sh,
+                    0, 0, sw, sh
+                );
+                }
+            }
+
+            // экспортируем из targetCanvas
+            if (format === 'svg') {
+                const pngData = targetCanvas.toDataURL('image/png');
+                const svg = `
+                    <svg xmlns="http://www.w3.org/2000/svg"
+                        width="${targetCanvas.width}" height="${targetCanvas.height}">
+                        <image href="${pngData}" width="${targetCanvas.width}"
+                            height="${targetCanvas.height}" />
+                    </svg>`;
+                const blob = new Blob([svg], { type: 'image/svg+xml' });
+                this.downloadBlob(blob, `vec-exp-${Date.now()}.svg`);
+            } else {
+                const mime = format === 'jpg' ? 'image/jpeg' : 'image/png';
+                targetCanvas.toBlob(blob => {
+                    if (blob) this.downloadBlob(blob, `vec-exp-${Date.now()}.${format}`);
+                }, mime);
+            }
+
+            // восстанавливаем выделение и комментарии
+            this.store.hideComments$.next(false);
+            this.store.selectedIds$.next(savedSel);
+        }, 50);
+    }
+
+    private downloadBlob(blob: Blob, filename: string) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+
+    // дублируем логику из CanvasComponent::getBounds
+    private getBounds(s: Shape): { left: number, top: number, right: number, bottom: number } {
+        if ((s as GroupShape).type === 'group') {
+            const arr = (s as GroupShape).children.map(c => this.getBounds(c));
+            return {
+                left: Math.min(...arr.map(b => b.left)),
+                top: Math.min(...arr.map(b => b.top)),
+                right: Math.max(...arr.map(b => b.right)),
+                bottom: Math.max(...arr.map(b => b.bottom)),
+            };
+        }
+
+        const sh = s as PrimitiveShape;
+        // базовые границы фигуры
+        let left: number, top: number, right: number, bottom: number;
+        switch (sh.type) {
+            case 'rect':
+                left = sh.x;
+                top = sh.y;
+                right = sh.x + sh.w;
+                bottom = sh.y + sh.h;
+                break;
+            case 'ellipse':
+                left = sh.x;
+                top = sh.y;
+                right = sh.x + sh.rx * 2;
+                bottom = sh.y + sh.ry * 2;
+                break;
+            case 'image':
+                left = sh.x;
+                top = sh.y;
+                right = sh.x + sh.w;
+                bottom = sh.y + sh.h;
+                break;
+            case 'line':
+                left = Math.min(sh.x1, sh.x2);
+                top = Math.min(sh.y1, sh.y2);
+                right = Math.max(sh.x1, sh.x2);
+                bottom = Math.max(sh.y1, sh.y2);
+                break;
+            case 'pen':
+                left = Math.min(...sh.points.map(p => p.x));
+                top = Math.min(...sh.points.map(p => p.y));
+                right = Math.max(...sh.points.map(p => p.x));
+                bottom = Math.max(...sh.points.map(p => p.y));
+                break;
+            case 'text':
+            case 'comment':
+                const w = 0;//this.ctx.measureText(sh.text).width;
+                left = sh.x;
+                top = sh.y - 16;
+                right = sh.x + w;
+                bottom = sh.y;
+                break;
+        }
+
+        // учитываем strokeWidth
+        const strokeW = (sh.style?.lineWidth ?? 0) / 2;
+        left -= strokeW;
+        top -= strokeW;
+        right += strokeW;
+        bottom += strokeW;
+
+        // учитываем тень
+        if (sh.style?.shadow) {
+            const { offsetX, offsetY, blur } = sh.style.shadow;
+            // тень расходится на blur в каждую сторону вокруг смещения
+            const expandX = blur + Math.abs(offsetX);
+            const expandY = blur + Math.abs(offsetY);
+            left = Math.min(left, left + offsetX - expandX);
+            top = Math.min(top, top + offsetY - expandY);
+            right = Math.max(right, right + offsetX + expandX);
+            bottom = Math.max(bottom, bottom + offsetY + expandY);
+        }
+
+        return { left, top, right, bottom };
     }
 }

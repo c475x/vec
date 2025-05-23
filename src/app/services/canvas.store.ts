@@ -25,6 +25,9 @@ export class CanvasStore {
        показать/скрыть релевантные опции)              */
     readonly activeTool$ = new BehaviorSubject<Tool>(Tool.Move);
 
+    /* прятать ли комментарии (нужен в экспорте) */
+    hideComments$ = new BehaviorSubject<boolean>(false);
+
     /* ────────── helpers ────────── */
     updateShapes(mutator: (arr: Shape[]) => void): void {
         const copy = [...this.shapes$.value];

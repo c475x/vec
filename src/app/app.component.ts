@@ -1,4 +1,4 @@
-import { Component } from '@angular/core';
+import { Component, HostListener } from '@angular/core';
 import { CanvasComponent } from './components/canvas/canvas.component';
 import { Tool } from './models/tool.enum';
 import { ToolbarComponent } from './components/toolbar/toolbar.component';
@@ -18,6 +18,11 @@ import { RightSidebarComponent } from './components/right-sidebar/right-sidebar.
     styleUrl: './app.component.scss'
 })
 export class AppComponent {
+    @HostListener('document:contextmenu', ['$event'])
+    onGlobalContextMenu(e: MouseEvent) {
+        e.preventDefault();
+    
+    }
     title = 'vector-studio';
     currentTool: Tool = Tool.Move;
 }

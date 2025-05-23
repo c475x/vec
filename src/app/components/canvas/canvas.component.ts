@@ -2,27 +2,10 @@
  *  «сердце» редактора: рисование, выделение, перетаскивание
  *  и отрисовка Canvas‑сцены. Работает вместе с CanvasStore.
  */
-import {
-    AfterViewInit,
-    Component,
-    ElementRef,
-    HostListener,
-    Input,
-    Output,
-    ViewChild,
-    OnDestroy,
-    EventEmitter,
-} from '@angular/core';
+import { AfterViewInit, Component, ElementRef, HostListener, Input, Output, ViewChild, OnDestroy, EventEmitter } from '@angular/core';
 import { Subscription } from 'rxjs';
 import { Tool } from '../../models/tool.enum';
-import {
-    Shape,
-    PrimitiveShape,
-    GroupShape,
-    Point,
-    ImageShape,
-    ShapeStyle,
-} from '../../models/shape.model';
+import { Shape, PrimitiveShape, GroupShape, Point, ImageShape, ShapeStyle } from '../../models/shape.model';
 import { CanvasStore } from '../../services/canvas.store';
 
 interface Bounds {
@@ -51,6 +34,7 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
     private ctx!: CanvasRenderingContext2D;
     private sub!: Subscription; // подписка на поток фигур
     private selSub!: Subscription;
+    private hideCommentsSub!: Subscription;
 
     private drawing = false; // сейчас рисуем?
     private startPoint!: Point; // первая точка drag‑а
@@ -101,6 +85,9 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
         /* также перерисовываем при изменении выделения */
         this.selSub = this.store.selectedIds$.subscribe(() => this.redraw());
 
+        /* также перерисовываем при изменении значения hideComments */
+        this.hideCommentsSub = this.store.hideComments$.subscribe(() => this.redraw());
+
         /* стартовая очистка */
         this.redraw();
     }
@@ -108,6 +95,7 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
     ngOnDestroy(): void {
         this.sub?.unsubscribe();
         this.selSub?.unsubscribe();
+        this.hideCommentsSub?.unsubscribe();
     }
 
     /** Удаляет все выбранные фигуры */
@@ -320,16 +308,19 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
             const x2 = Math.max(this.marqueeStart.x, this.marqueeEnd.x);
             const y2 = Math.max(this.marqueeStart.y, this.marqueeEnd.y);
 
-            // найдем все фигуры, чьи границы пересекаются с рамкой
-            const inMarquee = this.shapes
-                .filter(s => {
-                    const b = this.getBounds(s);
-                    return !(b.right < x1 || b.left > x2 || b.bottom < y1 || b.top > y2);
-                })
-                .map(s => s.id);
+            // 
+            if (x2 - x1 > 2 || y2 - y1 > 2) {
+                // найдем все фигуры, чьи границы пересекаются с рамкой
+                const inMarquee = this.shapes
+                    .filter(s => {
+                        const b = this.getBounds(s);
+                        return !(b.right < x1 || b.left > x2 || b.bottom < y1 || b.top > y2);
+                    })
+                    .map(s => s.id);
 
-            // выделяем их
-            this.store.selectedIds$.next(new Set(inMarquee));
+                // выделяем их
+                this.store.selectedIds$.next(new Set(inMarquee));
+            }
         }
 
         this.marqueeStart = this.marqueeEnd = null;
@@ -369,8 +360,14 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
         const cvs = this.canvasRef.nativeElement;
         this.ctx.clearRect(0, 0, cvs.width, cvs.height);
 
-        // рисуем все фигуры
-        for (const s of this.shapes) this.drawShape(s);
+        // рисуем все фигуры, кроме комментариев
+        const hideComments = this.store.hideComments$.value;
+        for (const s of this.shapes) {
+            if (hideComments && s.type === 'comment') {
+                continue;
+            }
+            this.drawShape(s);
+        }
 
         // рисуем выделение
         if (this.marqueeStart && this.marqueeEnd) {
@@ -379,14 +376,17 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
             const w = Math.abs(this.marqueeEnd.x - this.marqueeStart.x);
             const h = Math.abs(this.marqueeEnd.y - this.marqueeStart.y);
         
-            this.ctx.save();
-            this.ctx.lineWidth = 2;
-            this.ctx.strokeStyle = '#0c8ce9';
-            this.ctx.fillStyle = 'rgba(12,140,233,0.12)';
-            this.ctx.setLineDash([]);
-            this.ctx.strokeRect(x, y, w, h);
-            this.ctx.fillRect(x, y, w, h);
-            this.ctx.restore();
+            if (w > 2 || h > 2) {
+                this.ctx.save();
+                this.ctx.lineWidth = 2;
+                this.ctx.strokeStyle = '#0c8ce9';
+                this.ctx.fillStyle = 'rgba(12,140,233,0.12)';
+                this.ctx.setLineDash([]);
+                this.ctx.strokeRect(x, y, w, h);
+                this.ctx.fillRect(x, y, w, h);
+                this.ctx.restore();
+            }
+
             return; // не рисуем hover/bb пока marquee активна
         }
 
