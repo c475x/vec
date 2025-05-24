@@ -24,6 +24,17 @@ export interface ImageShape {
     style?: ShapeStyle;
 }
 
+export type VectorShape = {
+    id: number;
+    type: 'vector';
+    path: string;           // исходный d-атрибут
+    x: number;              // смещение координат
+    y: number;
+    scaleX: number;         // коэффициэнты масштабирования
+    scaleY: number;
+    style: ShapeStyle;
+  };
+
 export type PrimitiveShape =
     | { id: number; type: 'pen'; points: Point[]; style: ShapeStyle }
     | { id: number; type: 'rect'; x: number; y: number; w: number; h: number; style: ShapeStyle }
@@ -40,4 +51,4 @@ export type GroupShape = {
     style: ShapeStyle; // общие, пока не используется
 };
 
-export type Shape = PrimitiveShape | GroupShape;
+export type Shape = PrimitiveShape | VectorShape | GroupShape;

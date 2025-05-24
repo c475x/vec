@@ -5,9 +5,10 @@ import { PropertyRowComponent } from '../property-row/property-row.component';
 import { ColorRowComponent } from '../color-row/color-row.component';
 import { ActionRowComponent } from '../action-row/action-row.component';
 import { CanvasStore } from '../../services/canvas.store';
+import { isVector } from '../canvas/canvas.component';
 import { Observable, combineLatest } from 'rxjs';
 import { map, take } from 'rxjs/operators';
-import { Shape, ShapeStyle, GroupShape, PrimitiveShape } from '../../models/shape.model';
+import { Shape, ShapeStyle, GroupShape, PrimitiveShape, VectorShape } from '../../models/shape.model';
 
 @Component({
     selector: 'app-right-sidebar',
@@ -69,6 +70,10 @@ export class RightSidebarComponent {
         this.canvasW$ = this.singleShape$.pipe(
             map(s => {
                 if (!s) return 0;
+                if (isVector(s)) {
+                    const b = this.getBounds(s);
+                    return b.right - b.left;
+                }
                 if ('w' in s) return (s as any).w;
                 if ('rx' in s) return (s as any).rx * 2;
                 return 0;
@@ -77,6 +82,10 @@ export class RightSidebarComponent {
         this.canvasH$ = this.singleShape$.pipe(
             map(s => {
                 if (!s) return 0;
+                if (isVector(s)) {
+                    const b = this.getBounds(s);
+                    return b.bottom - b.top;
+                }
                 if ('h' in s) return (s as any).h;
                 if ('ry' in s) return (s as any).ry * 2;
                 return 0;
@@ -211,13 +220,35 @@ export class RightSidebarComponent {
                     }
                 }
 
+                else if (isVector(s)) {
+                    if (prop === 'x' || prop === 'y') {
+                        s[prop] = val;
+                    } else if (prop === 'w' || prop === 'h') {
+                        // сначала вычисляем bbox без масштабирования
+                        const svgNS = 'http://www.w3.org/2000/svg';
+                        const tmp = document.createElementNS(svgNS, 'path');
+                        tmp.setAttribute('d', s.path);
+                        const box = tmp.getBBox();
+                        const rawW = box.width;
+                        const rawH = box.height;
+
+                        if (prop === 'w') {
+                            s.scaleX = val / rawW;
+                        } else {
+                            s.scaleY = val / rawH;
+                        }
+                        return;
+                    }
+                    return;
+                }
+
                 else if (prop === 'x' || prop === 'y') {
                     (s as any)[prop] = val;
                 } else if (s.type === 'rect' || s.type === 'image') {
                     (s as any)[prop] = val;
                 } else if (s.type === 'ellipse') {
                     if (prop === 'w') (s as any).rx = val / 2;
-                    if (prop === 'h') (s as any).ry = val / 2;
+                    else if (prop === 'h') (s as any).ry = val / 2;
                 }
             });
         });
@@ -245,6 +276,111 @@ export class RightSidebarComponent {
                     }
                 });
             });
+    }
+
+    // дублируем логику из CanvasComponent::getBounds
+    private getBounds(s: Shape): { left: number, top: number, right: number, bottom: number } {
+        if ((s as GroupShape).type === 'group') {
+            const arr = (s as GroupShape).children.map(c => this.getBounds(c));
+            return {
+                left: Math.min(...arr.map(b => b.left)),
+                top: Math.min(...arr.map(b => b.top)),
+                right: Math.max(...arr.map(b => b.right)),
+                bottom: Math.max(...arr.map(b => b.bottom)),
+            };
+        }
+
+        if (isVector(s)) {
+            const v = s as VectorShape;
+
+            const svgNS = 'http://www.w3.org/2000/svg';
+            const tmpSvg = document.createElementNS(svgNS, 'svg');
+            const pathEl = document.createElementNS(svgNS, 'path');
+            pathEl.setAttribute('d', v.path);
+            tmpSvg.appendChild(pathEl);
+            document.body.appendChild(tmpSvg);
+
+            const box = pathEl.getBBox();
+
+            document.body.removeChild(tmpSvg);
+
+            const scaledX = box.x * v.scaleX + v.x;
+            const scaledY = box.y * v.scaleY + v.y;
+            const scaledW = box.width * v.scaleX;
+            const scaledH = box.height * v.scaleY;
+
+            return {
+                left: scaledX,
+                top: scaledY,
+                right: scaledX + scaledW,
+                bottom: scaledY + scaledH,
+            };
+        }
+
+        const sh = s as PrimitiveShape;
+        // базовые границы фигуры
+        let left: number, top: number, right: number, bottom: number;
+        switch (sh.type) {
+            case 'rect':
+                left = sh.x;
+                top = sh.y;
+                right = sh.x + sh.w;
+                bottom = sh.y + sh.h;
+                break;
+            case 'ellipse':
+                left = sh.x;
+                top = sh.y;
+                right = sh.x + sh.rx * 2;
+                bottom = sh.y + sh.ry * 2;
+                break;
+            case 'image':
+                left = sh.x;
+                top = sh.y;
+                right = sh.x + sh.w;
+                bottom = sh.y + sh.h;
+                break;
+            case 'line':
+                left = Math.min(sh.x1, sh.x2);
+                top = Math.min(sh.y1, sh.y2);
+                right = Math.max(sh.x1, sh.x2);
+                bottom = Math.max(sh.y1, sh.y2);
+                break;
+            case 'pen':
+                left = Math.min(...sh.points.map(p => p.x));
+                top = Math.min(...sh.points.map(p => p.y));
+                right = Math.max(...sh.points.map(p => p.x));
+                bottom = Math.max(...sh.points.map(p => p.y));
+                break;
+            case 'text':
+            case 'comment':
+                const w = 0;//this.ctx.measureText(sh.text).width;
+                left = sh.x;
+                top = sh.y - 16;
+                right = sh.x + w;
+                bottom = sh.y;
+                break;
+        }
+
+        // учитываем strokeWidth
+        const strokeW = (sh.style?.lineWidth ?? 0) / 2;
+        left -= strokeW;
+        top -= strokeW;
+        right += strokeW;
+        bottom += strokeW;
+
+        // учитываем тень
+        if (sh.style?.shadow) {
+            const { offsetX, offsetY, blur } = sh.style.shadow;
+            // тень расходится на blur в каждую сторону вокруг смещения
+            const expandX = blur + Math.abs(offsetX);
+            const expandY = blur + Math.abs(offsetY);
+            left = Math.min(left, left + offsetX - expandX);
+            top = Math.min(top, top + offsetY - expandY);
+            right = Math.max(right, right + offsetX + expandX);
+            bottom = Math.max(bottom, bottom + offsetY + expandY);
+        }
+
+        return { left, top, right, bottom };
     }
 
     /** экспорт холста в указанный формат */
@@ -337,83 +473,5 @@ export class RightSidebarComponent {
         a.download = filename;
         a.click();
         URL.revokeObjectURL(url);
-    }
-
-    // дублируем логику из CanvasComponent::getBounds
-    private getBounds(s: Shape): { left: number, top: number, right: number, bottom: number } {
-        if ((s as GroupShape).type === 'group') {
-            const arr = (s as GroupShape).children.map(c => this.getBounds(c));
-            return {
-                left: Math.min(...arr.map(b => b.left)),
-                top: Math.min(...arr.map(b => b.top)),
-                right: Math.max(...arr.map(b => b.right)),
-                bottom: Math.max(...arr.map(b => b.bottom)),
-            };
-        }
-
-        const sh = s as PrimitiveShape;
-        // базовые границы фигуры
-        let left: number, top: number, right: number, bottom: number;
-        switch (sh.type) {
-            case 'rect':
-                left = sh.x;
-                top = sh.y;
-                right = sh.x + sh.w;
-                bottom = sh.y + sh.h;
-                break;
-            case 'ellipse':
-                left = sh.x;
-                top = sh.y;
-                right = sh.x + sh.rx * 2;
-                bottom = sh.y + sh.ry * 2;
-                break;
-            case 'image':
-                left = sh.x;
-                top = sh.y;
-                right = sh.x + sh.w;
-                bottom = sh.y + sh.h;
-                break;
-            case 'line':
-                left = Math.min(sh.x1, sh.x2);
-                top = Math.min(sh.y1, sh.y2);
-                right = Math.max(sh.x1, sh.x2);
-                bottom = Math.max(sh.y1, sh.y2);
-                break;
-            case 'pen':
-                left = Math.min(...sh.points.map(p => p.x));
-                top = Math.min(...sh.points.map(p => p.y));
-                right = Math.max(...sh.points.map(p => p.x));
-                bottom = Math.max(...sh.points.map(p => p.y));
-                break;
-            case 'text':
-            case 'comment':
-                const w = 0;//this.ctx.measureText(sh.text).width;
-                left = sh.x;
-                top = sh.y - 16;
-                right = sh.x + w;
-                bottom = sh.y;
-                break;
-        }
-
-        // учитываем strokeWidth
-        const strokeW = (sh.style?.lineWidth ?? 0) / 2;
-        left -= strokeW;
-        top -= strokeW;
-        right += strokeW;
-        bottom += strokeW;
-
-        // учитываем тень
-        if (sh.style?.shadow) {
-            const { offsetX, offsetY, blur } = sh.style.shadow;
-            // тень расходится на blur в каждую сторону вокруг смещения
-            const expandX = blur + Math.abs(offsetX);
-            const expandY = blur + Math.abs(offsetY);
-            left = Math.min(left, left + offsetX - expandX);
-            top = Math.min(top, top + offsetY - expandY);
-            right = Math.max(right, right + offsetX + expandX);
-            bottom = Math.max(bottom, bottom + offsetY + expandY);
-        }
-
-        return { left, top, right, bottom };
     }
 }

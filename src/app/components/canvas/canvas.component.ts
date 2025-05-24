@@ -5,7 +5,7 @@
 import { AfterViewInit, Component, ElementRef, HostListener, Input, Output, ViewChild, OnDestroy, EventEmitter } from '@angular/core';
 import { Subscription } from 'rxjs';
 import { Tool } from '../../models/tool.enum';
-import { Shape, PrimitiveShape, GroupShape, Point, ImageShape, ShapeStyle } from '../../models/shape.model';
+import { Shape, PrimitiveShape, VectorShape, GroupShape, Point, ImageShape, ShapeStyle } from '../../models/shape.model';
 import { CanvasStore } from '../../services/canvas.store';
 
 interface Bounds {
@@ -13,6 +13,10 @@ interface Bounds {
     top: number;
     right: number;
     bottom: number;
+}
+
+export function isVector(s: Shape): s is VectorShape {
+    return (s as VectorShape).type === 'vector';
 }
 
 @Component({
@@ -308,7 +312,7 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
             const x2 = Math.max(this.marqueeStart.x, this.marqueeEnd.x);
             const y2 = Math.max(this.marqueeStart.y, this.marqueeEnd.y);
 
-            // 
+            // выделяем объекты только если w или h области выделения больше 2px
             if (x2 - x1 > 2 || y2 - y1 > 2) {
                 // найдем все фигуры, чьи границы пересекаются с рамкой
                 const inMarquee = this.shapes
@@ -347,10 +351,8 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
             this.redraw();
         }
 
-        if (this.marqueeStart) {
-            this.marqueeStart = this.marqueeEnd = null;
-            this.redraw();
-        }
+        this.marqueeStart = this.marqueeEnd = null;
+        this.redraw();
     }
 
     /* ─────────────────────────────────────────── */
@@ -457,7 +459,7 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
             (shape as GroupShape).children.forEach((c) => this.drawShape(c));
             return;
         }
-        const s = shape as PrimitiveShape;
+        const s = shape as PrimitiveShape | VectorShape;
 
         const st: ShapeStyle = {
             stroke: 'transparent',
@@ -489,6 +491,29 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
         }
 
         switch (s.type) {
+            case 'vector': {
+                const v = shape as VectorShape;
+                this.ctx.save();
+                this.ctx.globalAlpha = st.alpha ?? 1;
+
+                // применяем позицию и масштаб
+                this.ctx.translate(v.x, v.y);
+                this.ctx.scale(v.scaleX, v.scaleY);
+
+                const p = new Path2D(v.path);
+                if (st.fillEnabled && st.fill) {
+                    this.ctx.fillStyle = st.fill;
+                    this.ctx.fill(p);
+                }
+                if (st.strokeEnabled && st.stroke) {
+                    this.ctx.lineWidth = st.lineWidth!;
+                    this.ctx.strokeStyle = st.stroke!;
+                    this.ctx.stroke(p);
+                }
+
+                this.ctx.restore();
+                break;
+            }
             case 'image': {
                 const imgSh = s as ImageShape;
 
@@ -598,6 +623,8 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
     }
 
     private updateDraggedShape(shape: PrimitiveShape, p: Point): void {
+        if ((shape as any).type === 'vector') return;
+
         switch (shape.type) {
             case 'rect':
                 shape.w = p.x - shape.x;
@@ -618,7 +645,7 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
     private findShape(p: Point): Shape | null {
         for (let i = this.shapes.length - 1; i >= 0; i--) {
             const s = this.shapes[i];
-            const tol = (s as PrimitiveShape).style?.lineWidth! / 2 + 5; // tolerance - 5px + stroke (если есть)
+            const tol = (s as PrimitiveShape | VectorShape).style?.lineWidth! / 2 + 5; // tolerance - 5px + stroke (если есть)
             // для каждой фигуры проверяем попадание в геометрию + расширяем тест на tol
             if (this.pointInsideShape(p, s)) return s;
             // затем тестируем смещения по окр. контуру
@@ -637,8 +664,18 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
                 this.pointInsideShape(p, c)
             );
 
-        const sh = s as PrimitiveShape;
+        if (isVector(s)) {
+            const v = s as VectorShape;
+            const lx = (p.x - v.x) / v.scaleX;
+            const ly = (p.y - v.y) / v.scaleY;
+            const path = new Path2D(v.path);
+            return this.ctx.isPointInPath(path, lx, ly) || this.ctx.isPointInStroke(path, lx, ly);
+        }
+
+        const sh = s as PrimitiveShape | VectorShape;
         switch (sh.type) {
+            case 'vector':
+                return false; // описываем выше
             case 'image':
                 return (
                     p.x >= sh.x && p.x <= sh.x + sh.w && p.y >= sh.y && p.y <= sh.y + sh.h
@@ -694,6 +731,12 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
             return;
         }
 
+        if (isVector(s)) {
+            s.x = newX;
+            s.y = newY;
+            return;
+        }
+
         switch (s.type) {
             case 'image':
             case 'rect':
@@ -734,6 +777,34 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
                 bottom: Math.max(...arr.map((b) => b.bottom)),
             };
         }
+
+        if (isVector(s)) {
+            const v = s as VectorShape;
+
+            const svgNS = 'http://www.w3.org/2000/svg';
+            const tmpSvg = document.createElementNS(svgNS, 'svg');
+            const pathEl = document.createElementNS(svgNS, 'path');
+            pathEl.setAttribute('d', v.path);
+            tmpSvg.appendChild(pathEl);
+            document.body.appendChild(tmpSvg);
+
+            const box = pathEl.getBBox();
+
+            document.body.removeChild(tmpSvg);
+
+            const scaledX = box.x * v.scaleX + v.x;
+            const scaledY = box.y * v.scaleY + v.y;
+            const scaledW = box.width * v.scaleX;
+            const scaledH = box.height * v.scaleY;
+
+            return {
+                left: scaledX,
+                top: scaledY,
+                right: scaledX + scaledW,
+                bottom: scaledY + scaledH,
+            };
+        }
+
         const sh = s as PrimitiveShape;
         switch (sh.type) {
             case 'rect':
@@ -855,8 +926,32 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
         // отключаем тень
         this.ctx.shadowBlur = this.ctx.shadowOffsetX = this.ctx.shadowOffsetY = 0;
 
+        // обводка для группы
+        if ((shape as GroupShape).type == 'group') {
+            const sb = this.getBounds(shape);
+            this.ctx.strokeRect(sb.left, sb.top, sb.right - sb.left, sb.bottom - sb.top);
+            this.ctx.restore();
+            return;
+        }
+
         // рисуем по типу shape, аналогично drawShape но только stroke и без fill
         switch (shape.type) {
+            case 'vector':
+                const v = shape as VectorShape;
+                const M = this.ctx.getTransform();
+                const orig = new Path2D(v.path);
+                const P = new Path2D();
+                P.addPath(orig, new DOMMatrix()
+                    .translate(v.x, v.y)
+                    .scale(v.scaleX, v.scaleY)
+                );
+                const P2 = new Path2D();
+                P2.addPath(P, M);
+                this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+                this.ctx.lineWidth = 2;
+                this.ctx.stroke(P2);
+                this.ctx.setTransform(M);
+                break;                
             case 'rect':
                 this.roundRectPath(shape.x, shape.y, shape.w, shape.h, shape.style.radius || 0);
                 this.ctx.stroke();
@@ -888,7 +983,7 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
             case 'image':
             case 'text':
             case 'comment':
-                // для текста/комментариев просто повторим bounding box
+                // для текста просто повторим bounding box
                 const b = this.getBounds(shape);
                 this.ctx.strokeRect(b.left, b.top, b.right - b.left, b.bottom - b.top);
                 break;
@@ -944,7 +1039,7 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
         /* если нет копии исходной фигуры или ручка не активна — выходим */
         if (!this.initialShapeCopy || !this.activeHandle || !this.resizeOrigin)
             return;
-
+        
         const orig = this.initialShapeCopy; // «снимок» до начала resize
         const oB = this.getBounds(orig); // исходный bounding-box
 
@@ -963,6 +1058,19 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
         /* коэффициенты масштабирования (могут пригодиться для будущих типов) */
         const kx = newW / (oB.right - oB.left);
         const ky = newH / (oB.bottom - oB.top);
+
+        if (isVector(s)) {
+            const origVector = orig as VectorShape; 
+            const rawW = (oB.right - oB.left) / origVector.scaleX;
+            const rawH = (oB.bottom - oB.top) / origVector.scaleY;
+        
+            if (signX < 0) s.x = oB.right - newW;
+            if (signY < 0) s.y = oB.bottom - newH;
+        
+            s.scaleX = newW / rawW;
+            s.scaleY = newH / rawH;
+            return;
+        }
 
         /******************  рекурсивная функция, применяющая изменения  ******************/
         const apply = (target: Shape): void => {
@@ -1036,6 +1144,10 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
                 ...(s as GroupShape).children.map((c) => this.getShapeLeft(c))
             );
 
+        if (isVector(s)) {
+            return s.x;
+        }
+
         const sh = s as PrimitiveShape;
         switch (sh.type) {
             case 'image':
@@ -1058,6 +1170,10 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
             return Math.min(
                 ...(s as GroupShape).children.map((c) => this.getShapeTop(c))
             );
+
+        if (isVector(s)) {
+            return s.y;
+        }
 
         const sh = s as PrimitiveShape;
         switch (sh.type) {
@@ -1125,7 +1241,7 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
     handleKeyDown(e: KeyboardEvent): void {
         if ((e.key === 'Delete' || e.key === 'Backspace') && !e.repeat) {
             this.deleteSelected();
-            e.preventDefault(); // чтобы Backspace не «уходил» назад в браузере
+            e.preventDefault();
         }
     }
 }
