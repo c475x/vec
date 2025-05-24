@@ -645,6 +645,13 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
     private findShape(p: Point): Shape | null {
         for (let i = this.shapes.length - 1; i >= 0; i--) {
             const s = this.shapes[i];
+
+            // если фигура выделена, перемещение можно начинать с любого места внутри ее границ
+            const bb = this.getBounds(s);
+            if (bb.left <= p.x && p.x <= bb.right && bb.top <= p.y && p.y <= bb.bottom) {
+                if (this.store.selectedIds$.value.has(s.id)) return s;
+            }
+
             const tol = (s as PrimitiveShape | VectorShape).style?.lineWidth! / 2 + 5; // tolerance - 5px + stroke (если есть)
             // для каждой фигуры проверяем попадание в геометрию + расширяем тест на tol
             if (this.pointInsideShape(p, s)) return s;
