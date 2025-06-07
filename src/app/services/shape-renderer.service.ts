@@ -122,14 +122,33 @@ export class ShapeRendererService {
         // Fill (respect fillEnabled flag)
         if (style.fillEnabled && style.fill) {
             if (typeof style.fill === 'string') {
+                // Solid color
                 item.fillColor = new paper.Color(style.fill);
+            } else if ((style.fill as any).gradient) {
+                // Paper.js Gradient
+                (item as any).fillColor = style.fill as any;
             } else {
-                // Directly assign Paper.js Color or gradient object
-                (item as any).fillColor = style.fill;
+                // Domain Gradient object
+                const g = style.fill as any;
+                const stopsPairs: [paper.Color, number][] = g.stops.map((s: any) => [new paper.Color(s.color), s.offset]);
+                const gradConfig: any = { stops: stopsPairs };
+                if (g.type === 'radial') gradConfig.radial = true;
+                const bounds = (item as any).bounds as paper.Rectangle;
+                const originPt = new paper.Point(bounds.x + g.origin.x * bounds.width, bounds.y + g.origin.y * bounds.height);
+                const colorConfig: any = { gradient: gradConfig, origin: originPt };
+                if (g.type === 'linear') {
+                    const destPt = new paper.Point(bounds.x + g.destination.x * bounds.width, bounds.y + g.destination.y * bounds.height);
+                    colorConfig.destination = destPt;
+                } else {
+                    const radiusPx = g.radius * Math.max(bounds.width, bounds.height);
+                    colorConfig.radius = radiusPx;
+                }
+                // Assign fillColor via paper.Color to render gradient
+                item.fillColor = new paper.Color(colorConfig);
             }
         } else {
             // Clear fill when disabled or absent
-            (item as any).fillColor = null;
+            item.fillColor = null;
         }
         // Stroke (respect strokeEnabled flag)
         if (style.strokeEnabled && style.stroke) {

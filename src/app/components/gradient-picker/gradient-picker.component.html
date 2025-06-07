@@ -1,0 +1,33 @@
+<div class="gp">
+  <div class="gp-toggle">
+    <button [class.active]="fillType==='solid'" (click)="onTypeToggle('solid')">Solid</button>
+    <button [class.active]="fillType==='gradient'" (click)="onTypeToggle('gradient')">Gradient</button>
+  </div>
+  <div *ngIf="fillType==='solid'" class="gp-solid">
+    <app-color-row
+      label="Color"
+      [color]="stops[0].color"
+      [visible]="enabled"
+      (toggleVisible)="onEnabledToggle()"
+      (colorChange)="stops[0].color = $event; emitChange()">
+    </app-color-row>
+  </div>
+  <div *ngIf="fillType==='gradient'" class="gp-gradient">
+    <div class="gp-type">
+      <label>Type:</label>
+      <select [(ngModel)]="gradientType" (ngModelChange)="onGradientTypeChange($event)" class="gp-select">
+        <option value="linear">Linear</option>
+        <option value="radial">Radial</option>
+      </select>
+    </div>
+    <div class="stops-container">
+      <div class="stop-row" *ngFor="let s of stops; let i = index">
+        <div class="stop-color-box" [style.background]="s.color" (click)="openStopColorPicker(i)"></div>
+        <input class="stop-offset" type="number" min="0" max="100" step="1" [value]="s.offset*100" (change)="onOffsetChange($any($event.target).value, i)" />
+        <button class="stop-remove" type="button" (click)="removeStop(i)">Remove</button>
+      </div>
+      <button class="stop-add" type="button" (click)="addStop()">Add Stop</button>
+    </div>
+    <div class="gp-preview" [style.background]="preview"></div>
+  </div>
+</div>

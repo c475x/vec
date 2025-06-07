@@ -76,36 +76,39 @@
 
                 <!-- Style -->
                 <app-section title="Style">
-                    <app-property-row label="Opacity" [value]="(shape.style?.opacity ?? 1) * 100" unit="%"
+                    <app-property-row label="Opacity" [value]="(shape.style.opacity ?? 1) * 100" unit="%"
                         (valueChange)="onStyleChange({ opacity: +$event/100 })"></app-property-row>
                     <!-- Corner radius for rectangles -->
                     <ng-container *ngIf="shape.type === 'rectangle'">
                         <app-property-row label="Corner radius" [value]="(shape.radius ?? 0)" unit="px"
                             (valueChange)="onCornerRadiusChange(+$event)"></app-property-row>
                     </ng-container>
-                    <!-- Fill only for non-image shapes -->
+                    <!-- Fill: Solid/Gradient picker -->
                     <ng-container *ngIf="shape.type !== 'image'">
-                        <app-color-row label="Fill" [color]="shape.style?.fill ?? '#000000'" [visible]="shape.style?.fillEnabled ?? true"
-                            (toggleVisible)="onStyleChange({ fillEnabled: $event })"
-                            (colorChange)="onStyleChange({ fill: $event })"></app-color-row>
+                        <app-gradient-picker
+                            [fill]="shape.style.fill"
+                            [enabled]="shape.style.fillEnabled ?? false"
+                            (enabledChange)="onStyleChange({ fillEnabled: $event })"
+                            (fillChange)="onStyleChange({ fill: $event })">
+                        </app-gradient-picker>
                     </ng-container>
-                    <app-color-row label="Stroke" [color]="shape.style?.stroke ?? '#000000'"
-                        [visible]="shape.style?.strokeEnabled ?? true"
+                    <app-color-row label="Stroke" [color]="shape.style.stroke ?? '#000000'"
+                        [visible]="shape.style.strokeEnabled ?? false"
                         (toggleVisible)="onStyleChange({ strokeEnabled: $event })"
                         (colorChange)="onStyleChange({ stroke: $event })"></app-color-row>
-                    <app-property-row label="Stroke width" [value]="shape.style?.strokeWidth ?? 2" unit="px"
+                    <app-property-row label="Stroke width" [value]="shape.style.strokeWidth ?? 2" unit="px"
                         (valueChange)="onStyleChange({ strokeWidth: +$event })"></app-property-row>
                 </app-section>
 
                 <!-- Shadow -->
                 <app-section title="Shadow">
-                    <app-property-row label="Blur" [value]="shape.style?.shadowBlur ?? 0" unit="px"
+                    <app-property-row label="Blur" [value]="shape.style.shadowBlur ?? 0" unit="px"
                         (valueChange)="onStyleChange({ shadowBlur: +$event })"></app-property-row>
-                    <app-property-row label="Offset X" [value]="shape.style?.shadowOffset?.x ?? 0" unit="px"
+                    <app-property-row label="Offset X" [value]="shape.style.shadowOffset?.x ?? 0" unit="px"
                         (valueChange)="onShadowOffsetXChange(+$event)"></app-property-row>
-                    <app-property-row label="Offset Y" [value]="shape.style?.shadowOffset?.y ?? 0" unit="px"
+                    <app-property-row label="Offset Y" [value]="shape.style.shadowOffset?.y ?? 0" unit="px"
                         (valueChange)="onShadowOffsetYChange(+$event)"></app-property-row>
-                    <app-color-row label="Color" [color]="shape.style?.shadowColor ?? '#000000'" [fixed]="true"
+                    <app-color-row label="Color" [color]="shape.style.shadowColor ?? '#000000'" [fixed]="true"
                         (colorChange)="onStyleChange({ shadowColor: $event })"></app-color-row>
                 </app-section>
             </ng-template>

@@ -4,6 +4,7 @@ import * as paper from 'paper';
 import { SectionComponent } from '../section/section.component';
 import { PropertyRowComponent } from '../property-row/property-row.component';
 import { ColorRowComponent } from '../color-row/color-row.component';
+import { GradientPickerComponent } from '../gradient-picker/gradient-picker.component';
 import { ActionRowComponent } from '../action-row/action-row.component';
 import { CanvasStore } from '../../services/canvas.store';
 import { Observable, combineLatest } from 'rxjs';
@@ -18,6 +19,7 @@ import { Shape, ShapeStyle, GroupShape, PathShape } from '../../models/shape.mod
         SectionComponent,
         PropertyRowComponent,
         ColorRowComponent,
+        GradientPickerComponent,
         ActionRowComponent
     ],
     templateUrl: './right-sidebar.component.html',

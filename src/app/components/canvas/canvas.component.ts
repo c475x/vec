@@ -855,6 +855,11 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
 
     @HostListener('window:keydown', ['$event'])
     handleKeyDown(event: KeyboardEvent): void {
+        // Ignore Delete/Backspace when focus is on an input or editable element
+        const active = document.activeElement as HTMLElement | null;
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) {
+            return;
+        }
         if ((event.key === 'Delete' || event.key === 'Backspace') && !event.repeat) {
             // Удаляем выделенные объекты
             const selectedIds = Array.from(this.store.selectedIds$.value);

@@ -31,7 +31,7 @@ export interface Point2D {
 
 export interface ShapeStyle {
     opacity?: number;
-    fill?: string | paper.Gradient;
+    fill?: string | paper.Gradient | Gradient;
     fillEnabled?: boolean;
     stroke?: string;
     strokeEnabled?: boolean;

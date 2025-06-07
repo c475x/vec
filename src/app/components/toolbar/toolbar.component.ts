@@ -99,23 +99,17 @@ export class ToolbarComponent {
         // Remove imported item from project
         item.remove();
         // Convert each Path to our PathShape
+        // Grab active default style for fallback
+        const activeDefault = this.store.activeStyle$.value;
         const shapes: PathShape[] = paths.map((path, idx) => {
             const segments = path.segments.map(seg => ({
                 point: { x: seg.point.x, y: seg.point.y },
                 handleIn: seg.handleIn && { x: seg.handleIn.x, y: seg.handleIn.y },
                 handleOut: seg.handleOut && { x: seg.handleOut.x, y: seg.handleOut.y }
             }));
-            // Build style with gradient support
-            let fillVal: string | paper.Gradient | undefined;
-            let fillEnabled = false;
-            if (path.fillColor) {
-                fillEnabled = true;
-                if ((path.fillColor as any).gradient) {
-                    fillVal = (path.fillColor as any).gradient as paper.Gradient;
-                } else {
-                    fillVal = path.fillColor.toCSS(true)!;
-                }
-            }
+            // Build style: import only solid fills and strokes, no gradient support
+            const fillEnabled = !!path.fillColor;
+            const fillVal = path.fillColor ? path.fillColor.toCSS(true)! : undefined;
             const style: ShapeStyle = {
                 stroke: path.strokeColor?.toCSS(true),
                 strokeEnabled: !!path.strokeColor,
@@ -127,6 +121,16 @@ export class ToolbarComponent {
                 shadowOffset: { x: path.shadowOffset.x, y: path.shadowOffset.y },
                 shadowColor: path.shadowColor?.toCSS(true)
             };
+            // Fallback: if no fill and no stroke, apply default stroke
+            if (!style.fillEnabled && !style.strokeEnabled) {
+                style.strokeEnabled = true;
+                style.stroke = activeDefault.stroke;
+                style.strokeWidth = activeDefault.strokeWidth;
+            }
+            // Fallback: if fillEnabled but no fill value, apply default fill
+            if (style.fillEnabled && style.fill == null) {
+                style.fill = activeDefault.fill;
+            }
             return { id: Date.now() + idx, type: 'path', segments, closed: path.closed, style } as PathShape;
         });
         if (!shapes.length) return;

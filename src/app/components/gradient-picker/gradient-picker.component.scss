@@ -1,0 +1,140 @@
+.gp {
+  padding: 0.5rem;
+  border: 1px solid #f5f5f5;
+  border-radius: 4px;
+  font-family: 'SF Pro Display';
+  font-weight: 600;
+  color: #f5f5f5;
+}
+.gp-toggle {
+  display: flex;
+  margin-bottom: 0.5rem;
+}
+.gp-toggle button {
+  flex: 1;
+  padding: 0.25rem;
+  border: none;
+  background: #343436;
+  color: #7b7b7b;
+  cursor: pointer;
+  outline: none;
+  font-family: 'SF Pro Display';
+  font-weight: 600;
+  font-size: 12px;
+}
+.gp-toggle button.active {
+  background: #3A3A3C;
+  color: #f5f5f5;
+}
+.gp-type {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+.gp-type label {
+  margin-right: 0.5rem;
+  font-size: 12px;
+}
+.gp-stop {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+.gp-preview {
+  height: 32px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  margin-top: 0.5rem;
+}
+
+/* Ensure color rows fit within gradient picker */
+:host ::ng-deep app-color-row .color-row {
+  width: auto;
+  flex: 1;
+  max-width: none;
+}
+
+/* Gradient stops list */
+.stop-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+.stop-color-box {
+  width: 16px;
+  height: 16px;
+  border-radius: 2px;
+  border: 1px solid #ccc;
+  cursor: pointer;
+}
+.stop-offset {
+  width: 50px;
+  height: 24px;
+  background: #3A3A3C;
+  border: 1px solid #555;
+  outline: none;
+  color: #F5F5F5;
+  text-align: right;
+  padding: 0 4px;
+  border-radius: 2px;
+  font-family: 'SF Pro Display';
+  font-size: 12px;
+}
+.stop-unit {
+  font-family: 'SF Pro Display';
+  font-size: 12px;
+  color: #F5F5F5;
+}
+.stop-remove {
+  background: none;
+  border: none;
+  outline: none;
+  color: #f5f5f5;
+  font-family: 'SF Pro Display';
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.stop-add {
+  width: 100%;
+  padding: 0.25rem;
+  background: #3A3A3C;
+  border: none;
+  border-radius: 2px;
+  color: #F5F5F5;
+  font-family: 'SF Pro Display';
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: center;
+}
+
+.gp-select {
+  background: #3A3A3C;
+  color: #F5F5F5;
+  border: 1px solid #555;
+  padding: 0.25rem 0.5rem;
+  border-radius: 2px;
+  font-family: 'SF Pro Display';
+  font-size: 12px;
+  outline: none;
+}
+.gp-select:focus {
+  border-color: #0c8ce9;
+}
+
+/* Remove native number input spinners */
+.stop-offset::-webkit-outer-spin-button,
+.stop-offset::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.stop-offset {
+  // -moz-appearance: textfield;
+}
