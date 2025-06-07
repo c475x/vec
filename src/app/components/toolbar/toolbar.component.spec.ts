@@ -1,6 +1,8 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 
 import { ToolbarComponent } from './toolbar.component';
+import { CanvasStore } from '../../services/canvas.store';
+import { ExportService } from '../../services/export.service';
 
 describe('ToolbarComponent', () => {
     let component: ToolbarComponent;
@@ -8,7 +10,8 @@ describe('ToolbarComponent', () => {
 
     beforeEach(async () => {
         await TestBed.configureTestingModule({
-            imports: [ToolbarComponent]
+            imports: [ToolbarComponent],
+            providers: [CanvasStore, ExportService]
         })
             .compileComponents();
 

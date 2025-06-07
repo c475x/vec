@@ -1,135 +1,126 @@
 <ng-container *ngIf="selectedIds$ | async as sel">
-    <!-- Множественное выделение -->
+    <!-- Multiple Selection -->
     <ng-container *ngIf="sel.size > 1; else singleOrGroup">
         <app-section title="Actions">
             <app-action-row label="Group" (action)="store.groupSelected()"
-                [disabled]="!canGroup"></app-action-row>
+                [disabled]="!(canGroup$ | async)"></app-action-row>
             <app-action-row label="Ungroup" (action)="store.ungroupSelected()"
-                [disabled]="true"></app-action-row>
-            <app-action-row label="Merge paths" (action)="store.mergeSelected()"
-                [disabled]="true"></app-action-row>
+                [disabled]="!(canUngroup$ | async)"></app-action-row>
+            <app-action-row label="Merge paths" (action)="store.mergePaths()"
+                [disabled]="!(canMerge$ | async)"></app-action-row>
             <app-action-row label="Bring to front" (action)="store.bringToFront()"
-                [disabled]="true"></app-action-row>
+                [disabled]="!(canReorder$ | async)"></app-action-row>
             <app-action-row label="Send to back" (action)="store.sendToBack()"
-                [disabled]="true"></app-action-row>
+                [disabled]="!(canReorder$ | async)"></app-action-row>
         </app-section>
     </ng-container>
 
-    <!-- Одиночное выделение или группа -->
+    <!-- Single Selection or Group -->
     <ng-template #singleOrGroup>
         <ng-container *ngIf="singleShape$ | async as shape; else placeholder">
-            <ng-container *ngIf="shape.type !== 'comment'">
-                <ng-container *ngIf="shape.type === 'group'; else primitiveUI">
+            <ng-container *ngIf="shape.type === 'group'; else primitiveUI">
+                <!-- Position -->
+                <app-section title="Position">
+                    <app-property-row [value]="getGroupX(shape)" label="X" unit="px"
+                        (valueChange)="onPositionChange('x', +$event)"></app-property-row>
+                    <app-property-row [value]="getGroupY(shape)" label="Y" unit="px"
+                        (valueChange)="onPositionChange('y', +$event)"></app-property-row>
+                    <app-property-row [value]="getGroupW(shape)" label="Width" unit="px"
+                        (valueChange)="onPositionChange('w', +$event)"></app-property-row>
+                    <app-property-row [value]="getGroupH(shape)" label="Height" unit="px"
+                        (valueChange)="onPositionChange('h', +$event)"></app-property-row>
+                </app-section>
 
-                    <!-- Position -->
-                    <app-section title="Position">
-                        <app-property-row [value]="getGroupX(shape)" label="X" unit="px"
-                            (valueChange)="onPositionChange('x', +$event)"></app-property-row>
-                        <app-property-row [value]="getGroupY(shape)" label="Y" unit="px"
-                            (valueChange)="onPositionChange('y', +$event)"></app-property-row>
-                        <app-property-row [value]="getGroupW(shape)" label="Width" unit="px"
-                            (valueChange)="onPositionChange('w', +$event)"></app-property-row>
-                        <app-property-row [value]="getGroupH(shape)" label="Height" unit="px"
-                            (valueChange)="onPositionChange('h', +$event)"></app-property-row>
-                    </app-section>
+                <!-- Actions -->
+                <app-section title="Actions">
+                    <app-action-row label="Group" (action)="store.groupSelected()"
+                        [disabled]="!(canGroup$ | async)"></app-action-row>
+                    <app-action-row label="Ungroup" (action)="store.ungroupSelected()"
+                        [disabled]="!(canUngroup$ | async)"></app-action-row>
+                    <app-action-row label="Merge paths" (action)="store.mergePaths()"
+                        [disabled]="!(canMerge$ | async)"></app-action-row>
+                    <app-action-row label="Bring to front" (action)="store.bringToFront()"
+                        [disabled]="!(canReorder$ | async)"></app-action-row>
+                    <app-action-row label="Send to back" (action)="store.sendToBack()"
+                        [disabled]="!(canReorder$ | async)"></app-action-row>
+                </app-section>
+            </ng-container>
 
-                    <!-- Actions -->
-                    <app-section title="Actions">
-                        <app-action-row label="Group" (action)="store.groupSelected()"
-                            [disabled]="true"></app-action-row>
-                        <app-action-row label="Ungroup" (action)="store.ungroupSelected()"
-                            [disabled]="!canUngroup"></app-action-row>
-                        <app-action-row label="Merge paths" (action)="store.mergeSelected()"
-                            [disabled]="true"></app-action-row>
-                        <app-action-row label="Bring to front" (action)="store.bringToFront()"
-                            [disabled]="!canReorder"></app-action-row>
-                        <app-action-row label="Send to back" (action)="store.sendToBack()"
-                            [disabled]="!canReorder"></app-action-row>
-                    </app-section>
+            <!-- UI for single shapes -->
+            <ng-template #primitiveUI>
+                <!-- Position -->
+                <app-section title="Position">
+                    <app-property-row label="X" [value]="(canvasX$ | async) ?? 0" unit="px"
+                        (valueChange)="onPositionChange('x', +$event)"></app-property-row>
+                    <app-property-row label="Y" [value]="(canvasY$ | async) ?? 0" unit="px"
+                        (valueChange)="onPositionChange('y', +$event)"></app-property-row>
+                    <app-property-row label="Width" [value]="(canvasW$ | async) ?? 0" unit="px"
+                        (valueChange)="onPositionChange('w', +$event)"></app-property-row>
+                    <app-property-row label="Height" [value]="(canvasH$ | async) ?? 0" unit="px"
+                        (valueChange)="onPositionChange('h', +$event)"></app-property-row>
+                </app-section>
 
-                </ng-container>
+                <!-- Actions -->
+                <app-section title="Actions">
+                    <app-action-row label="Group" (action)="store.groupSelected()"
+                        [disabled]="!(canGroup$ | async)"></app-action-row>
+                    <app-action-row label="Ungroup" (action)="store.ungroupSelected()"
+                        [disabled]="!(canUngroup$ | async)"></app-action-row>
+                    <app-action-row label="Merge paths" (action)="store.mergePaths()"
+                        [disabled]="!(canMerge$ | async)"></app-action-row>
+                    <app-action-row label="Bring to front" (action)="store.bringToFront()"
+                        [disabled]="!(canReorder$ | async)"></app-action-row>
+                    <app-action-row label="Send to back" (action)="store.sendToBack()"
+                        [disabled]="!(canReorder$ | async)"></app-action-row>
+                </app-section>
 
-                <!-- UI для одиночных фигур -->
-                <ng-template #primitiveUI>
-
-                    <!-- Position -->
-                    <app-section title="Position">
-                        <app-property-row label="X" [value]="(canvasX$ | async) ?? 0" unit="px"
-                            (valueChange)="onPositionChange('x', +$event)"></app-property-row>
-                        <app-property-row label="Y" [value]="(canvasY$ | async) ?? 0" unit="px"
-                            (valueChange)="onPositionChange('y', +$event)"></app-property-row>
-                        <app-property-row label="Width" [value]="(canvasW$ | async) ?? 0" unit="px"
-                            (valueChange)="onPositionChange('w', +$event)"></app-property-row>
-                        <app-property-row label="Height" [value]="(canvasH$ | async) ?? 0" unit="px"
-                            (valueChange)="onPositionChange('h', +$event)"></app-property-row>
-                    </app-section>
-
-                    <!-- Actions -->
-                    <app-section title="Actions">
-                        <app-action-row label="Group" (action)="store.groupSelected()"
-                            [disabled]="!canGroup"></app-action-row>
-                        <app-action-row label="Ungroup" (action)="store.ungroupSelected()"
-                            [disabled]="!canUngroup"></app-action-row>
-                        <app-action-row label="Merge paths" (action)="store.mergeSelected()"
-                            [disabled]="!canMerge"></app-action-row>
-                        <app-action-row label="Bring to front" (action)="store.bringToFront()"
-                            [disabled]="!canReorder"></app-action-row>
-                        <app-action-row label="Send to back" (action)="store.sendToBack()"
-                            [disabled]="!canReorder"></app-action-row>
-                    </app-section>
-
-                    <!-- Radius -->
-                    <app-section *ngIf="shape.type==='rect'" title="Rectangle radius">
-                        <app-property-row label="Radius" [value]="shape.style.radius!" unit="px"
-                            (valueChange)="onStyleChange({ radius: +$event })"></app-property-row>
-                    </app-section>
-
-                    <!-- Text -->
-                    <app-section *ngIf="shape.type==='text'" title="Text">
-                        <p class="placeholder">Text properties will go here</p>
-                    </app-section>
-
-                    <!-- Color -->
-                    <app-section title="Color">
-                        <app-property-row label="Opacity" [value]="shape.style!.alpha! * 100" unit="%"
-                            (valueChange)="onStyleChange({ alpha: +$event/100 })"></app-property-row>
-                        <app-color-row label="Fill" [color]="shape.style!.fill!" [visible]="shape.style!.fillEnabled!"
+                <!-- Style -->
+                <app-section title="Style">
+                    <app-property-row label="Opacity" [value]="(shape.style?.opacity ?? 1) * 100" unit="%"
+                        (valueChange)="onStyleChange({ opacity: +$event/100 })"></app-property-row>
+                    <!-- Corner radius for rectangles -->
+                    <ng-container *ngIf="shape.type === 'rectangle'">
+                        <app-property-row label="Corner radius" [value]="(shape.radius ?? 0)" unit="px"
+                            (valueChange)="onCornerRadiusChange(+$event)"></app-property-row>
+                    </ng-container>
+                    <!-- Fill only for non-image shapes -->
+                    <ng-container *ngIf="shape.type !== 'image'">
+                        <app-color-row label="Fill" [color]="shape.style?.fill ?? '#000000'" [visible]="shape.style?.fillEnabled ?? true"
                             (toggleVisible)="onStyleChange({ fillEnabled: $event })"
                             (colorChange)="onStyleChange({ fill: $event })"></app-color-row>
-                        <app-color-row label="Stroke" [color]="shape.style!.stroke!"
-                            [visible]="shape.style!.strokeEnabled!"
-                            (toggleVisible)="onStyleChange({ strokeEnabled: $event })"
-                            (colorChange)="onStyleChange({ stroke: $event })"></app-color-row>
-                        <app-property-row label="Stroke width" [value]="shape.style!.lineWidth!" unit="px"
-                            (valueChange)="onStyleChange({ lineWidth: +$event })"></app-property-row>
-                    </app-section>
+                    </ng-container>
+                    <app-color-row label="Stroke" [color]="shape.style?.stroke ?? '#000000'"
+                        [visible]="shape.style?.strokeEnabled ?? true"
+                        (toggleVisible)="onStyleChange({ strokeEnabled: $event })"
+                        (colorChange)="onStyleChange({ stroke: $event })"></app-color-row>
+                    <app-property-row label="Stroke width" [value]="shape.style?.strokeWidth ?? 2" unit="px"
+                        (valueChange)="onStyleChange({ strokeWidth: +$event })"></app-property-row>
+                </app-section>
 
-                    <!-- Shadow -->
-                    <app-section title="Shadow">
-                        <app-property-row label="X" [value]="shape.style!.shadow!.offsetX!" unit="px"
-                            (valueChange)="onShadow('offsetX', +$event)"></app-property-row>
-                        <app-property-row label="Y" [value]="shape.style!.shadow!.offsetY!" unit="px"
-                            (valueChange)="onShadow('offsetY', +$event)"></app-property-row>
-                        <app-property-row label="Blur" [value]="shape.style!.shadow!.blur!" unit="px"
-                            (valueChange)="onShadow('blur', +$event)"></app-property-row>
-                        <app-color-row label="Color" [color]="shape.style!.shadow!.color!" [fixed]="true"
-                            (colorChange)="onShadow('color', $event)"></app-color-row>
-                    </app-section>
-
-                </ng-template>
-            </ng-container>
+                <!-- Shadow -->
+                <app-section title="Shadow">
+                    <app-property-row label="Blur" [value]="shape.style?.shadowBlur ?? 0" unit="px"
+                        (valueChange)="onStyleChange({ shadowBlur: +$event })"></app-property-row>
+                    <app-property-row label="Offset X" [value]="shape.style?.shadowOffset?.x ?? 0" unit="px"
+                        (valueChange)="onShadowOffsetXChange(+$event)"></app-property-row>
+                    <app-property-row label="Offset Y" [value]="shape.style?.shadowOffset?.y ?? 0" unit="px"
+                        (valueChange)="onShadowOffsetYChange(+$event)"></app-property-row>
+                    <app-color-row label="Color" [color]="shape.style?.shadowColor ?? '#000000'" [fixed]="true"
+                        (colorChange)="onStyleChange({ shadowColor: $event })"></app-color-row>
+                </app-section>
+            </ng-template>
         </ng-container>
     </ng-template>
 
-    <!-- Экспорт -->
-    <ng-container *ngIf="(shapes$ | async)!.length > 0">
+    <!-- Export -->
+    <ng-container *ngIf="(shapes$ | async)?.length ?? 0 > 0">
         <app-section title="Export">
             <app-action-row label="Export as PNG" (action)="exportAs('png')"
-            [disabled]="false"></app-action-row>
+                [disabled]="false"></app-action-row>
             <app-action-row label="Export as JPG" (action)="exportAs('jpg')"
-            [disabled]="false"></app-action-row>
+                [disabled]="false"></app-action-row>
             <app-action-row label="Export as SVG" (action)="exportAs('svg')"
-            [disabled]="false"></app-action-row>
+                [disabled]="false"></app-action-row>
         </app-section>
     </ng-container>
 </ng-container>

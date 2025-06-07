@@ -40,8 +40,7 @@ export class LeftSidebarComponent {
             arr.forEach(s => {
                 // присваиваем defaultNames только один раз на каждый id
                 if (!this.defaultNames[s.id]) {
-                    const shapeName = s.type === 'rect' ? 'rectangle' : s.type;
-                    const base = shapeName.charAt(0).toUpperCase() + shapeName.slice(1);
+                    const base = s.type.charAt(0).toUpperCase() + s.type.slice(1);
                     this.counts[base] = (this.counts[base] || 0) + 1;
                     this.defaultNames[s.id] =
                         this.counts[base] > 1 ? `${base} ${this.counts[base]}` : base;

@@ -1,54 +1,109 @@
-export interface ShapeStyle {
-    fill: string;
-    stroke?: string;
-    lineWidth?: number;
-    fillEnabled?: boolean;
-    strokeEnabled?: boolean;
+import * as paper from 'paper';
+
+export interface GradientStop {
+    offset: number;
+    color: string;
     alpha?: number;
-    radius?: number; // скругление прямоугольника
-    shadow?: { offsetX: number; offsetY: number; blur: number; color: string };
-    gradient?: { type: 'linear' | 'radial'; colours: string[] };
 }
 
-export interface Point { x: number; y: number; }
+export interface BaseGradient {
+    stops: GradientStop[];
+    origin: paper.Point;
+}
 
-export interface ImageShape {
-    id: number;
-    type: 'image';
+export interface LinearGradient extends BaseGradient {
+    type: 'linear';
+    destination: paper.Point;
+}
+
+export interface RadialGradient extends BaseGradient {
+    type: 'radial';
+    radius: number;
+    focus?: paper.Point; // For focal point different from origin
+}
+
+export type Gradient = LinearGradient | RadialGradient;
+
+export interface Point2D {
     x: number;
     y: number;
-    w: number;
-    h: number;
-    src: string;
-    _img?: HTMLImageElement;
-    style?: ShapeStyle;
 }
 
-export type VectorShape = {
+export interface ShapeStyle {
+    opacity?: number;
+    fill?: string | paper.Gradient;
+    fillEnabled?: boolean;
+    stroke?: string;
+    strokeEnabled?: boolean;
+    strokeWidth?: number;
+    shadowBlur?: number;
+    shadowOffset?: Point2D;
+    shadowColor?: string;
+}
+
+export interface BaseShape {
     id: number;
-    type: 'vector';
-    path: string;           // исходный d-атрибут
-    x: number;              // смещение координат
-    y: number;
-    scaleX: number;         // коэффициэнты масштабирования
-    scaleY: number;
+    name?: string;
     style: ShapeStyle;
-  };
+    selected?: boolean;
+    locked?: boolean;
+    visible?: boolean;
+    paperObject?: paper.Item; // Reference to the actual Paper.js object
+}
 
-export type PrimitiveShape =
-    | { id: number; type: 'pen'; points: Point[]; style: ShapeStyle }
-    | { id: number; type: 'rect'; x: number; y: number; w: number; h: number; style: ShapeStyle }
-    | { id: number; type: 'line'; x1: number; y1: number; x2: number; y2: number; style: ShapeStyle }
-    | { id: number; type: 'ellipse'; x: number; y: number; rx: number; ry: number; style: ShapeStyle }
-    | { id: number; type: 'text'; x: number; y: number; text: string; style: ShapeStyle }
-    | { id: number; type: 'comment'; x: number; y: number; text: string; style: ShapeStyle }
-    | ImageShape;
+export interface PathShape extends BaseShape {
+    type: 'path';
+    segments: paper.Segment[];
+    closed: boolean;
+}
 
-export type GroupShape = {
-    id: number;
+export interface RectangleShape extends BaseShape {
+    type: 'rectangle';
+    topLeft: paper.Point;
+    size: paper.Size;
+    radius?: number;
+}
+
+export interface EllipseShape extends BaseShape {
+    type: 'ellipse';
+    center: paper.Point;
+    radius: paper.Size;
+}
+
+export interface TextShape extends BaseShape {
+    type: 'text';
+    content: string;
+    position: paper.Point;
+    fontSize?: number;
+    fontFamily?: string;
+    justification?: string;
+}
+
+export interface ImageShape extends BaseShape {
+    type: 'image';
+    source: string;
+    position: paper.Point;
+    size: paper.Size;
+    radius?: number;
+}
+
+export interface GroupShape extends BaseShape {
     type: 'group';
     children: Shape[];
-    style: ShapeStyle; // общие, пока не используется
-};
+}
 
-export type Shape = PrimitiveShape | VectorShape | GroupShape;
+export type Shape = 
+    | PathShape 
+    | RectangleShape 
+    | EllipseShape 
+    | TextShape 
+    | ImageShape 
+    | GroupShape;
+
+export interface CanvasState {
+    shapes: Shape[];
+    selectedShapes: Set<number>;
+    activeLayer?: number;
+    zoom: number;
+    pan: paper.Point;
+}

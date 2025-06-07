@@ -1,22 +1,14 @@
-/*  src/app/components/canvas/canvas.component.ts
- *  «сердце» редактора: рисование, выделение, перетаскивание
- *  и отрисовка Canvas‑сцены. Работает вместе с CanvasStore.
- */
 import { AfterViewInit, Component, ElementRef, HostListener, Input, Output, ViewChild, OnDestroy, EventEmitter } from '@angular/core';
 import { Subscription } from 'rxjs';
+import paper from 'paper';
 import { Tool } from '../../models/tool.enum';
-import { Shape, PrimitiveShape, VectorShape, GroupShape, Point, ImageShape, ShapeStyle } from '../../models/shape.model';
+import { Shape, PathShape, RectangleShape, EllipseShape, TextShape, ImageShape, GroupShape, ShapeStyle } from '../../models/shape.model';
 import { CanvasStore } from '../../services/canvas.store';
+import { ShapeRendererService } from '../../services/shape-renderer.service';
+import { SelectionRendererService, BoundingBoxConfig } from '../../services/selection-renderer.service';
 
-interface Bounds {
-    left: number;
-    top: number;
-    right: number;
-    bottom: number;
-}
-
-export function isVector(s: Shape): s is VectorShape {
-    return (s as VectorShape).type === 'vector';
+interface PaperItemWithId extends paper.Item {
+    shapeId?: number;
 }
 
 @Component({
@@ -26,1229 +18,1040 @@ export function isVector(s: Shape): s is VectorShape {
     styleUrls: ['./canvas.component.scss'],
 })
 export class CanvasComponent implements AfterViewInit, OnDestroy {
-    /* ——— входящий активный инструмент ——— */
     @Input() tool: Tool = Tool.Move;
     @Output() toolChange = new EventEmitter<Tool>();
 
-    /* ——— ссылка на <canvas> ——— */
     @ViewChild('canvas', { static: true })
     private canvasRef!: ElementRef<HTMLCanvasElement>;
 
-    /* ——— приватные состояния ——— */
-    private ctx!: CanvasRenderingContext2D;
-    private sub!: Subscription; // подписка на поток фигур
-    private selSub!: Subscription;
-    private hideCommentsSub!: Subscription;
+    // Public wrapper methods for DOM events
+    public onMouseDown(event: MouseEvent): void {
+        // Clear marquee selection when starting a new action
+        this.marqueeActive = false;
+        this.marqueeStart = null;
+        this.marqueeEnd = null;
+        
+        if (!this.project?.view) return;
 
-    private drawing = false; // сейчас рисуем?
-    private startPoint!: Point; // первая точка drag‑а
-    private hoveredShape: Shape | null = null;
-    private movingShape: Shape | null = null; // перетаскиваемая фигура
-    private moveOffset: Point = { x: 0, y: 0 };
-
-    // для box-selection
-    private marqueeStart: Point | null = null;
-    private marqueeEnd:   Point | null = null;
-
-    /* ——— удобный геттер для массива фигур из стора ——— */
-    private get shapes(): Shape[] {
-        return this.store.shapes$.value;
+        const toolEvent = this.createToolEvent(event, 'mousedown');
+        this.handleMouseDown(toolEvent);
     }
 
-    private readonly HANDLE = 8;
+    public onMouseMove(event: MouseEvent): void {
+        if (!this.project?.view) return;
+
+        const toolEvent = this.createToolEvent(event, 'mousemove');
+        if (event.buttons === 1) {
+            this.handleMouseDrag(toolEvent);
+        } else {
+            this.handleMouseMove(toolEvent);
+        }
+    }
+
+    public onMouseUp(event: MouseEvent): void {
+        if (!this.project?.view) return;
+
+        const toolEvent = this.createToolEvent(event, 'mouseup');
+        this.handleMouseUp(toolEvent);
+        // Reset mouse tracking state
+        this.lastMousePoint = null;
+        this.dragStartPoint = null;
+    }
+
+    // Paper.js specific properties
+    private project!: paper.Project;
+    private mainLayer!: paper.Layer;
+    private guideLayer!: paper.Layer;
+    private selectionLayer!: paper.Layer;
+
+    // Tool states
+    private paperTool!: paper.Tool;
+    private currentPath: paper.Path | null = null;
+    private hoveredItem: PaperItemWithId | null = null;
+    private selectedItems: Set<PaperItemWithId> = new Set();
+    private movingItem: PaperItemWithId | null = null;
+    private resizingItem: PaperItemWithId | null = null;
+
+    // Mouse interaction state
+    private dragStartPoint: paper.Point | null = null;
+    private lastMousePoint: paper.Point | null = null;
+    private moveOffset!: paper.Point;
+
+    // Resize handle state
+    private readonly HANDLE_SIZE = 8;
     private activeHandle: 'nw' | 'ne' | 'se' | 'sw' | null = null;
-    private resizeOrigin: Point | null = null;
+    private initialBounds: paper.Rectangle | null = null;
+
+    // Initial positions for move operation
+    private initialPositions: Map<number, paper.Point> = new Map();
+    // For resize operation
     private initialShapeCopy: Shape | null = null;
+    private resizeOrigin: paper.Point | null = null;
 
-    constructor(private store: CanvasStore) { }
+    // Bounding box style configuration
+    private readonly boundingBoxConfig = {
+        padding: 0,
+        strokeColor: '#0c8ce9',
+        strokeWidth: 1,
+        handleSize: 8,
+        handleFillColor: 'white',
+        handleStrokeColor: '#0c8ce9',
+        handleStrokeWidth: 1,
+        selectionFillColor: 'rgba(12,140,233,0.1)',
+        dimensionsBoxHeight: 18,
+        dimensionsFontSize: 11,
+        dimensionsPadding: 4,
+        dimensionsYOffset: 13,
+    };
 
-    /* ─────────────────────────────────────────── */
-    /* life‑cycle                                 */
-    /* ─────────────────────────────────────────── */
+    // --- Marquee selection state ---
+    private marqueeActive: boolean = false;
+    private marqueeStart: paper.Point | null = null;
+    private marqueeEnd: paper.Point | null = null;
+
+    private subscriptions: Subscription[] = [];
+
+    constructor(private store: CanvasStore, private renderer: ShapeRendererService, private selectionRenderer: SelectionRendererService) {}
+
     ngAfterViewInit(): void {
+        console.log('Initializing Paper.js canvas');
+        // Setup Paper.js
         const canvas = this.canvasRef.nativeElement;
+        paper.setup(canvas);
+        this.project = paper.project;
 
-        canvas.width = canvas.offsetWidth;
-        canvas.height = canvas.offsetHeight;
-
-        const ctx = canvas.getContext('2d');
-        if (!ctx) throw new Error('2D context unavailable');
-        this.ctx = ctx;
-        this.ctx.lineCap = 'round';
-        this.ctx.lineJoin = 'round';
-
-        /* при любом изменении массива фигур – перерисовываем сцену */
-        this.sub = this.store.shapes$.subscribe(() => {
-            // если ранее наведённый объект уже удалён — сбросим hover
-            if (this.hoveredShape && !this.shapes.find(s => s.id === this.hoveredShape!.id)) {
-                this.hoveredShape = null;
-            }
-            this.redraw();
+        // Set canvas size
+        this.project.view.viewSize = new paper.Size(
+            canvas.offsetWidth,
+            canvas.offsetHeight
+        );
+        console.log('Canvas size set:', { 
+            width: canvas.offsetWidth, 
+            height: canvas.offsetHeight 
         });
 
-        /* также перерисовываем при изменении выделения */
-        this.selSub = this.store.selectedIds$.subscribe(() => this.redraw());
+        // Initialize moveOffset after Paper.js is set up
+        this.moveOffset = new paper.Point(0, 0);
 
-        /* также перерисовываем при изменении значения hideComments */
-        this.hideCommentsSub = this.store.hideComments$.subscribe(() => this.redraw());
+        // Create layers for different purposes
+        this.mainLayer = new paper.Layer();
+        this.mainLayer.name = 'mainLayer';
+        this.mainLayer.activate();
+        console.log('Main layer created and activated');
 
-        /* стартовая очистка */
-        this.redraw();
+        this.guideLayer = new paper.Layer();
+        this.guideLayer.name = 'guideLayer';
+
+        this.selectionLayer = new paper.Layer();
+        this.selectionLayer.name = 'selectionLayer';
+
+        // Initialize Paper.js tool
+        this.setupPaperTool();
+
+        // Subscribe to store changes
+        this.subscribeToStore();
+
+        // Initial render
+        this.updateCanvas();
     }
 
     ngOnDestroy(): void {
-        this.sub?.unsubscribe();
-        this.selSub?.unsubscribe();
-        this.hideCommentsSub?.unsubscribe();
+        this.subscriptions.forEach(sub => sub.unsubscribe());
+        this.project.remove();
     }
 
-    /** Удаляет все выбранные фигуры */
-    deleteSelected(): void {
-        const sel = this.store.selectedIds$.value; // Set<number>
-        if (!sel.size) return;
+    private setupPaperTool(): void {
+        this.paperTool = new paper.Tool();
 
-        /* 1. убираем фигуры из массива */
-        const left = this.store.shapes$.value.filter((sh) => !sel.has(sh.id));
-        this.store.shapes$.next(left);
+        this.paperTool.onMouseDown = (event: paper.ToolEvent) => {
+            this.handleMouseDown(event);
+        };
 
-        /* 2. очищаем выделение */
-        this.store.selectedIds$.next(new Set<number>());
+        this.paperTool.onMouseDrag = (event: paper.ToolEvent) => {
+            this.handleMouseDrag(event);
+        };
 
-        /* 3. перерисовываем полотно */
-        this.redraw();
+        this.paperTool.onMouseMove = (event: paper.ToolEvent) => {
+            this.handleMouseMove(event);
+        };
+
+        this.paperTool.onMouseUp = (event: paper.ToolEvent) => {
+            this.handleMouseUp(event);
+        };
+
+        // Activate the tool
+        this.paperTool.activate();
     }
 
-    /* ─────────────────────────────────────────── */
-    /* mouse events                               */
-    /* ─────────────────────────────────────────── */
-    mousedown(e: MouseEvent): void {
-        const pos = this.pointer(e);
-        /* ---- если клик попал на ручку ---- */
-        const h = this.handleAtPoint(pos);
-        if (h) {
-            this.activeHandle = h;
-            this.resizeOrigin = pos;
-            const id = [...this.store.selectedIds$.value][0];
-            this.initialShapeCopy = structuredClone(
-                this.shapes.find((s) => s.id === id) as Shape
-            );
-            return; // клик именно по ручке – дальше не идём
-        }
-        this.startPoint = pos;
+    private handleMouseDown(event: paper.ToolEvent): void {
+        console.log('handleMouseDown at', event.point);
+        const point = event.point;
+        this.dragStartPoint = point;
+        this.lastMousePoint = point;
 
-        switch (this.tool) {
-            /* === 1. MOVE (select / drag) =============== */
-            case Tool.Move: {
-                const target = this.findShape(pos);
-
-                if (target) {
-                    e.shiftKey
-                        ? this.store.toggle(target.id)
-                        : this.store.select(target.id);
-                    this.movingShape = target;
-                    this.moveOffset = {
-                        x: pos.x - this.getShapeLeft(target),
-                        y: pos.y - this.getShapeTop(target),
-                    };
-                } else {
-                    this.store.clearSelection();
-                    this.marqueeStart = pos;
-                    this.marqueeEnd   = pos;
-                    this.redraw();
-                }
-                break;
+        console.log('selectionLayer items data handles:', this.selectionLayer.children.map(ch => ch.data));
+        // Check for click on a resize handle path in selectionLayer
+        const handleHit = this.project.hitTest(point, {
+            fill: true,
+            stroke: true,
+            tolerance: this.boundingBoxConfig.handleSize,
+            match: (res: paper.HitResult) => res.item.layer === this.selectionLayer && (res.item.data as any)?.handle
+        });
+        if (handleHit?.item) {
+            const handleName = (handleHit.item.data as any).handle as 'nw' | 'ne' | 'se' | 'sw';
+            console.log('Clicked on handle item', handleName);
+            this.activeHandle = handleName;
+            this.resizingItem = Array.from(this.selectedItems)[0];
+            // Capture initial bounds and shape copy for resize
+            this.initialBounds = this.resizingItem.bounds.clone();
+            const id = this.resizingItem.shapeId;
+            if (id != null) {
+                const shape = this.store.shapes$.value.find(s => s.id === id);
+                this.initialShapeCopy = shape ? JSON.parse(JSON.stringify(shape)) as Shape : null;
             }
-
-            /* === 2. pen tool =================== */
-            case Tool.Pen: {
-                this.drawing = true;
-                const pen: PrimitiveShape = {
-                    id: Date.now(),
-                    type: 'pen',
-                    points: [pos],
-
-                    style: { ...this.store.activeStyle$.value, fill: '#000000', stroke: '#ffffff', fillEnabled: false, strokeEnabled: true },
-                };
-                this.store.updateShapes((arr) => arr.push(pen));
-                this.store.select(pen.id);
-                break;
-            }
-
-            /* === 3. фигуры, создаваемые drag‑ом ========= */
-            case Tool.Rect:
-            case Tool.Ellipse: {
-                this.drawing = true;
-                const shape = this.initialShapeForDrag(pos);
-                shape.style = { ...this.store.activeStyle$.value };
-                if (this.tool === Tool.Rect) shape.style.radius = 0;
-
-                this.store.updateShapes((arr) => arr.push(shape));
-                this.store.select(shape.id);
-                break;
-            }
-            case Tool.Line: {
-                this.drawing = true;
-                const line: PrimitiveShape = {
-                    id: Date.now(),
-                    type: 'line',
-                    x1: pos.x, y1: pos.y,
-                    x2: pos.x, y2: pos.y,
-                    style: { ...this.store.activeStyle$.value, fill: '#000000', stroke: '#ffffff', fillEnabled: false, strokeEnabled: true },
-                };
-                this.store.updateShapes(arr => arr.push(line));
-                this.store.select(line.id);
-                break;
-            }
-
-            /* === 4. текст ========= */
-            case Tool.Text:
-                {
-                    const txt = prompt('Enter text:');
-                    if (!txt) return;
-
-                    const shape: PrimitiveShape = {
-                        id: Date.now(),
-                        type: 'text',
-                        x: pos.x,
-                        y: pos.y,
-                        text: txt,
-                        style: { ...this.store.activeStyle$.value },
-                    } as any;
-
-                    this.store.updateShapes((arr) => arr.push(shape));
-                    this.store.select(shape.id);
-                    break;
-                }
-
-            /* === 5. комментарий ========= */
-            case Tool.Comment:
-                {
-                    const txt = prompt('Enter comment:');
-                    if (!txt) return;
-
-                    const shape: PrimitiveShape = {
-                        id: Date.now(),
-                        type: 'comment',
-                        x: pos.x,
-                        y: pos.y,
-                        text: txt,
-                    } as any;
-
-                    this.store.updateShapes((arr) => arr.push(shape));
-                    this.store.select(shape.id);
-                    break;
-                }
-        }
-    }
-
-    mousemove(e: MouseEvent): void {
-        const pos = this.pointer(e);
-
-        /* - заканчиваем выделение move tool - */
-        if (this.marqueeStart) {
-            this.marqueeEnd = pos;
-            this.redraw();
+            this.resizeOrigin = point;
+            this.updateCanvas();
             return;
-          }
+        }
 
-        /* - проверка, наведен ли курсор на фигуру - */
         if (this.tool === Tool.Move) {
-            this.hoveredShape = this.findShape(pos);
-            this.redraw();
-        }
-
-        /* === процесс изменения размера === */
-        if (this.activeHandle && this.resizeOrigin) {
-            const id = [...this.store.selectedIds$.value][0];
-            const shp = this.shapes.find((s) => s.id === id);
-            if (shp) {
-                this.updateResizedShape(shp, pos);
-                this.redraw();
+            let hitSelectedItem = false;
+            // Check if clicked within selected item's bounding box for move
+            for (const selItem of this.selectedItems) {
+                const expandedBounds = selItem.bounds.expand(this.boundingBoxConfig.padding);
+                if (expandedBounds.contains(point)) {
+                    this.movingItem = selItem;
+                    this.moveOffset = point.subtract(selItem.position);
+                    hitSelectedItem = true;
+                    // Record initial positions for move
+                    this.initialPositions.clear();
+                    this.selectedItems.forEach(it => {
+                        if (it.shapeId != null) {
+                            this.initialPositions.set(it.shapeId, it.position.clone());
+                        }
+                    });
+                    break;
+                }
             }
-            return; // мышь двигает ручку – дальше код перемещения не нужен
-        }
 
-        /* — перетаскивание выбранной фигуры — */
-        if (this.tool === Tool.Move && this.movingShape) {
-            this.store.updateShapes((arr) => {
-                const s = arr.find((sh) => sh.id === this.movingShape!.id);
-                if (s)
-                    this.translateShape(
-                        s,
-                        pos.x - this.moveOffset.x,
-                        pos.y - this.moveOffset.y
-                    );
-            });
+            if (!hitSelectedItem) {
+                // Regular hit testing for unselected shapes
+                const hitResult = this.project.hitTest(point, {
+                    fill: true,
+                    stroke: true,
+                    segments: true,
+                    pixel: true,
+                    tolerance: 5,
+                    match: (result: paper.HitResult) => result.item.layer === this.mainLayer
+                });
+
+                if (hitResult?.item) {
+                    // Find top-level item with shapeId (e.g., for images wrapped in groups)
+                    let item = hitResult.item as PaperItemWithId;
+                    while (item && item.shapeId == null) {
+                        item = item.parent as PaperItemWithId;
+                    }
+                    if (item?.shapeId) {
+                        if (!event.modifiers.shift) {
+                            this.selectedItems.clear();
+                        }
+                        this.selectedItems.add(item);
+                        this.movingItem = item;
+                        this.moveOffset = point.subtract(item.position);
+                        // Record initial positions for move
+                        this.initialPositions.clear();
+                        this.selectedItems.forEach(it => {
+                            if (it.shapeId != null) {
+                                this.initialPositions.set(it.shapeId, it.position.clone());
+                            }
+                        });
+                        // Update store selection
+                        if (event.modifiers.shift) {
+                            this.store.toggle(item.shapeId);
+                        } else {
+                            this.store.select(item.shapeId);
+                        }
+                        this.updateCanvas();
+                    } else {
+                        // Fallback: bounding box click detection
+                        let boxHit: PaperItemWithId | null = null;
+                        for (let i = this.mainLayer.children.length - 1; i >= 0; i--) {
+                            const child = this.mainLayer.children[i] as PaperItemWithId;
+                            if (child.bounds.contains(point)) {
+                                boxHit = child;
+                                break;
+                            }
+                        }
+                        if (boxHit?.shapeId) {
+                            // Select via box hit
+                            if (!event.modifiers.shift) this.selectedItems.clear();
+                            this.selectedItems.add(boxHit);
+                            this.movingItem = boxHit;
+                            this.moveOffset = point.subtract(boxHit.position);
+                            this.initialPositions.clear();
+                            this.selectedItems.forEach(it => it.shapeId != null && this.initialPositions.set(it.shapeId, it.position.clone()));
+                            if (event.modifiers.shift) this.store.toggle(boxHit.shapeId);
+                            else this.store.select(boxHit.shapeId);
+                            this.updateCanvas();
+                        } else {
+                            // Clicked on empty space - start marquee selection
+                            this.selectedItems.clear();
+                            this.store.clearSelection();
+                            this.marqueeActive = true;
+                            this.marqueeStart = point;
+                            this.marqueeEnd = point;
+                            this.updateCanvas();
+                        }
+                    }
+                } else {
+                    // Fallback if no hitResult: bounding box click
+                    let boxHit: PaperItemWithId | null = null;
+                    for (let i = this.mainLayer.children.length - 1; i >= 0; i--) {
+                        const child = this.mainLayer.children[i] as PaperItemWithId;
+                        if (child.bounds.contains(point)) {
+                            boxHit = child;
+                            break;
+                        }
+                    }
+                    if (boxHit?.shapeId) {
+                        if (!event.modifiers.shift) this.selectedItems.clear();
+                        this.selectedItems.add(boxHit);
+                        this.movingItem = boxHit;
+                        this.moveOffset = point.subtract(boxHit.position);
+                        this.initialPositions.clear();
+                        this.selectedItems.forEach(it => it.shapeId != null && this.initialPositions.set(it.shapeId, it.position.clone()));
+                        if (event.modifiers.shift) this.store.toggle(boxHit.shapeId);
+                        else this.store.select(boxHit.shapeId);
+                        this.updateCanvas();
+                    } else {
+                        this.selectedItems.clear();
+                        this.store.clearSelection();
+                        this.marqueeActive = true;
+                        this.marqueeStart = point;
+                        this.marqueeEnd = point;
+                        this.updateCanvas();
+                    }
+                }
+            } else {
+                // Preview existing selection move
+                this.updateCanvas();
+            }
             return;
         }
 
-        /* — свободное рисование (pen) — */
-        if (this.tool === Tool.Pen && this.drawing) {
-            this.store.updateShapes((arr) => {
-                const pen = arr[arr.length - 1] as PrimitiveShape & { type: 'pen' };
-                pen.points.push(pos);
-            });
-            return;
+        // Handle other tools
+        switch (this.tool) {
+            case Tool.Pen: {
+                const style = this.store.activeStyle$.value;
+                const strokeColor = style.strokeEnabled && style.stroke && typeof style.stroke === 'string'
+                    ? new paper.Color(style.stroke)
+                    : null;
+                const fillColor = null; // no fill preview for pen
+
+                this.currentPath = new paper.Path({
+                    segments: [point],
+                    strokeColor,
+                    strokeWidth: style.strokeWidth || 2,
+                    strokeCap: 'round',
+                    strokeJoin: 'round',
+                    fillColor
+                });
+                this.mainLayer.addChild(this.currentPath);
+                this.currentPath.selected = false;
+                break;
+            }
+
+            case Tool.Rect: {
+                const style = this.store.activeStyle$.value;
+                const strokeColor = null; // no stroke preview for rect
+                const fillColor = style.fillEnabled && style.fill && typeof style.fill === 'string'
+                    ? new paper.Color(style.fill)
+                    : null;
+
+                // Create rectangle with minimal size 1x1
+                const rect = new paper.Rectangle(point, point.add(new paper.Point(1, 1)));
+                this.currentPath = new paper.Path.Rectangle({
+                    rectangle: rect,
+                    strokeColor,
+                    strokeWidth: style.strokeWidth || 2,
+                    fillColor
+                });
+                this.currentPath.data = { type: 'rectangle' };
+                this.mainLayer.addChild(this.currentPath);
+                break;
+            }
+
+            case Tool.Ellipse: {
+                const style = this.store.activeStyle$.value;
+                const strokeColor = null; // no stroke preview for ellipse
+                const fillColor = style.fillEnabled && style.fill && typeof style.fill === 'string'
+                    ? new paper.Color(style.fill)
+                    : null;
+
+                // Create ellipse with minimal size 1x1
+                this.currentPath = new paper.Path.Ellipse({
+                    rectangle: new paper.Rectangle(point, point.add(new paper.Point(1, 1))),
+                    strokeColor,
+                    strokeWidth: style.strokeWidth || 2,
+                    fillColor
+                });
+                this.currentPath.data = { type: 'ellipse' };
+                this.mainLayer.addChild(this.currentPath);
+                break;
+            }
+
+            case Tool.Line: {
+                const style = this.store.activeStyle$.value;
+                const strokeColor = style.strokeEnabled && style.stroke ? new paper.Color(style.stroke) : null;
+                const strokeWidth = style.strokeWidth || 2;
+                // Create line with zero length initially
+                this.currentPath = new paper.Path.Line({
+                    from: event.point,
+                    to: event.point,
+                    strokeColor,
+                    strokeWidth
+                });
+                this.mainLayer.addChild(this.currentPath);
+                this.currentPath.data = { type: 'line' };
+                break;
+            }
         }
 
-        /* — тянем прямоугольник / линию / эллипс — */
-        if (
-            this.drawing &&
-            (this.tool === Tool.Rect ||
-                this.tool === Tool.Line ||
-                this.tool === Tool.Ellipse)
-        ) {
-            this.store.updateShapes((arr) => {
-                const shape = arr[arr.length - 1];
-                this.updateDraggedShape(shape as PrimitiveShape, pos);
-            });
-        }
+        this.resizingItem = null;
+        this.activeHandle = null;
+
+        // Ensure selection is up to date
+        this.updateSelection();
+        this.updateCanvas();
     }
 
-    mouseup(): void {
-        if (this.marqueeStart && this.marqueeEnd) {
+    private handleMouseDrag(event: paper.ToolEvent): void {
+        const point = event.point;
+        const delta = event.delta;
+        console.log('handleMouseDrag called, activeHandle:', this.activeHandle, 'movingItem:', this.movingItem?.shapeId, 'resizingItem:', this.resizingItem?.shapeId, 'delta:', delta, 'point:', point);
+
+        // Resize: update store shapes based on initial copy and origin
+        if (this.resizingItem && this.activeHandle && this.initialBounds && this.initialShapeCopy && this.resizeOrigin) {
+            console.log('Resizing in progress', this.activeHandle);
+            this.updateResizedShape(point);
+            // Re-render all shapes
+            this.updateCanvas();
+            return;
+        }
+
+        // Marquee selection update
+        if (this.marqueeActive && this.marqueeStart) {
+            this.marqueeEnd = point;
+            this.updateCanvas();
+            return;
+        }
+
+        // Move preview: adjust item positions visually based on initialPositions
+        if (this.movingItem && this.dragStartPoint) {
+            console.log('Moving item in handleMouseDrag', this.movingItem.shapeId, 'delta from start:', event.point.subtract(this.dragStartPoint));
+            const deltaFromStart = event.point.subtract(this.dragStartPoint);
+            this.selectedItems.forEach(item => {
+                const id = item.shapeId;
+                const start = id != null ? this.initialPositions.get(id) : null;
+                if (start) {
+                    item.position = start.add(deltaFromStart);
+                }
+            });
+            this.updateSelection();
+            return;
+        }
+
+        if (this.currentPath) {
+            switch (this.tool) {
+                case Tool.Pen:
+                    this.currentPath.add(point);
+                    this.currentPath.selected = false;
+                    this.updateCanvas(); // Превью pen tool
+                    break;
+
+                case Tool.Rect:
+                case Tool.Ellipse: {
+                    const topLeft = new paper.Point(
+                        Math.min(this.dragStartPoint!.x, point.x),
+                        Math.min(this.dragStartPoint!.y, point.y)
+                    );
+                    const bottomRight = new paper.Point(
+                        Math.max(this.dragStartPoint!.x, point.x),
+                        Math.max(this.dragStartPoint!.y, point.y)
+                    );
+                    // Минимальный размер 1x1
+                    const minW = Math.max(1, bottomRight.x - topLeft.x);
+                    const minH = Math.max(1, bottomRight.y - topLeft.y);
+                    const rect = new paper.Rectangle(topLeft, new paper.Size(minW, minH));
+                    if (this.tool === Tool.Rect) {
+                        (this.currentPath as paper.Path.Rectangle).bounds = rect;
+                    } else {
+                        (this.currentPath as paper.Path.Ellipse).bounds = rect;
+                    }
+                    this.updateCanvas();
+                    break;
+                }
+
+                case Tool.Line: {
+                    // Update line endpoint
+                    const line = this.currentPath as paper.Path;
+                    line.firstSegment.point = this.dragStartPoint!;
+                    line.lastSegment.point = event.point;
+                    this.updateCanvas();
+                    break;
+                }
+            }
+        }
+
+        this.lastMousePoint = point;
+        this.updateCanvas();
+    }
+
+    private handleMouseMove(event: paper.ToolEvent): void {
+        this.lastMousePoint = event.point;
+        // Marquee selection update
+        if (this.marqueeActive && this.marqueeStart) {
+            this.marqueeEnd = event.point;
+            this.updateCanvas();
+            return;
+        }
+        // Always detect hovered shape underneath cursor
+        const hitResult = this.project.hitTest(event.point, {
+            fill: true,
+            stroke: true,
+            segments: true,
+            pixel: true,
+            tolerance: 5,
+            match: (result: paper.HitResult) => result.item.layer === this.mainLayer
+        });
+        if (hitResult?.item) {
+            // Find top-level item with shapeId for hover
+            let item = hitResult.item as PaperItemWithId;
+            while (item && item.shapeId == null) {
+                item = item.parent as PaperItemWithId;
+            }
+            this.hoveredItem = item;
+        } else {
+            this.hoveredItem = null;
+        }
+        this.updateCanvas();
+    }
+
+    private handleMouseUp(event: paper.ToolEvent): void {
+        if (this.marqueeActive && this.marqueeStart && this.marqueeEnd) {
             const x1 = Math.min(this.marqueeStart.x, this.marqueeEnd.x);
             const y1 = Math.min(this.marqueeStart.y, this.marqueeEnd.y);
             const x2 = Math.max(this.marqueeStart.x, this.marqueeEnd.x);
             const y2 = Math.max(this.marqueeStart.y, this.marqueeEnd.y);
-
-            // выделяем объекты только если w или h области выделения больше 2px
             if (x2 - x1 > 2 || y2 - y1 > 2) {
-                // найдем все фигуры, чьи границы пересекаются с рамкой
-                const inMarquee = this.shapes
-                    .filter(s => {
-                        const b = this.getBounds(s);
-                        return !(b.right < x1 || b.left > x2 || b.bottom < y1 || b.top > y2);
-                    })
-                    .map(s => s.id);
-
-                // выделяем их
-                this.store.selectedIds$.next(new Set(inMarquee));
+                // Выделяем все объекты, чьи bounds пересекаются с рамкой
+                const selectedIds = new Set<number>();
+                for (const item of this.mainLayer.children) {
+                    const bounds = item.bounds;
+                    if (!(bounds.right < x1 || bounds.left > x2 || bounds.bottom < y1 || bounds.top > y2)) {
+                        const paperItem = item as PaperItemWithId;
+                        if (paperItem.shapeId) selectedIds.add(paperItem.shapeId);
+                    }
+                }
+                this.store.selectedIds$.next(selectedIds);
             }
+            this.marqueeActive = false;
+            this.marqueeStart = null;
+            this.marqueeEnd = null;
+            this.updateCanvas();
+            return;
         }
 
-        this.marqueeStart = this.marqueeEnd = null;
-        this.drawing = false;
-        this.movingShape = null;
-        this.activeHandle = null;
-        this.resizeOrigin = null;
-        this.initialShapeCopy = null;
+        if (this.currentPath) {
+            let shape = this.pathToShape(this.currentPath);
+            // Override default style based on tool
+            switch (this.tool) {
+                case Tool.Pen:
+                case Tool.Line:
+                    shape.style = {
+                        ...shape.style,
+                        stroke: '#000000',
+                        fill: '#d9d9d9',
+                        strokeEnabled: true,
+                        fillEnabled: false,
+                        strokeWidth: 2
+                    };
+                    break;
+                case Tool.Rect:
+                case Tool.Ellipse:
+                    shape.style = {
+                        ...shape.style,
+                        stroke: '#000000',
+                        fill: '#d9d9d9',
+                        strokeEnabled: false,
+                        fillEnabled: true,
+                        strokeWidth: 2
+                    };
+                    break;
+            }
+            // Inherit shadow settings
+            const active = this.store.activeStyle$.value;
+            shape.style.shadowBlur = active.shadowBlur;
+            shape.style.shadowOffset = active.shadowOffset;
+            shape.style.shadowColor = active.shadowColor;
+            this.store.updateShapes(shapes => {
+                shapes.push(shape);
+            });
+            
+            // Select the newly created shape
+            this.store.select(shape.id);
+            
+            this.currentPath.remove();
+            this.currentPath = null;
+        }
 
-        // сбрасываем инструмент обратно к move
+        // Commit moving changes to the store before clearing state
+        if (this.movingItem) {
+            this.store.updateShapes(shapes => {
+                this.selectedItems.forEach(item => {
+                    const id = item.shapeId;
+                    if (id != null) {
+                        const shape = shapes.find(s => s.id === id);
+                        if (shape) {
+                            const bounds = item.bounds;
+                            if (shape.type === 'rectangle') {
+                                (shape as RectangleShape).topLeft = new paper.Point(bounds.x, bounds.y);
+                                (shape as RectangleShape).size = new paper.Size(bounds.width, bounds.height);
+                            } else if (shape.type === 'ellipse') {
+                                (shape as EllipseShape).center = bounds.center;
+                                (shape as EllipseShape).radius = new paper.Size(bounds.width / 2, bounds.height / 2);
+                            } else if (shape.type === 'path') {
+                                const pathItem = item as paper.Path;
+                                // Assign segments directly to persist path shape
+                                (shape as PathShape).segments = pathItem.segments;
+                                (shape as PathShape).closed = pathItem.closed;
+                            } else if (shape.type === 'image') {
+                                // Commit image move: update center position and size
+                                (shape as ImageShape).position = bounds.center;
+                                (shape as ImageShape).size = new paper.Size(bounds.width, bounds.height);
+                            } else if (shape.type === 'group') {
+                                // Commit group move: read each child item's final bounds/segments
+                                const groupItem = item as paper.Group;
+                                const childrenData = (shape as GroupShape).children;
+                                groupItem.children.forEach((childItem, idx) => {
+                                    const childData = childrenData[idx];
+                                    const bounds = childItem.bounds;
+                                    if (childData.type === 'rectangle') {
+                                        (childData as RectangleShape).topLeft = new paper.Point(bounds.x, bounds.y);
+                                        (childData as RectangleShape).size = new paper.Size(bounds.width, bounds.height);
+                                    } else if (childData.type === 'ellipse') {
+                                        (childData as EllipseShape).center = bounds.center;
+                                        (childData as EllipseShape).radius = new paper.Size(bounds.width / 2, bounds.height / 2);
+                                    } else if (childData.type === 'path') {
+                                        const pathItem = childItem as paper.Path;
+                                        (childData as PathShape).segments = pathItem.segments;
+                                        (childData as PathShape).closed = pathItem.closed;
+                                    } else if (childData.type === 'image') {
+                                        (childData as ImageShape).position = childItem.position as paper.Point;
+                                        (childData as ImageShape).size = new paper.Size(bounds.width, bounds.height);
+                                    }
+                                });
+                            }
+                        }
+                    }
+                });
+            });
+        }
+        this.movingItem = null;
+        this.resizingItem = null;
+        this.activeHandle = null;
+
+        // Reset tool to Move after drawing
         this.tool = Tool.Move;
         this.toolChange.emit(this.tool);
 
-        this.redraw();
+        // Ensure selection is up to date and re-render canvas
+        this.updateSelection();
+        this.updateCanvas();
+        // Clear initial positions map after move
+        this.initialPositions.clear();
+        // Clear resize state
+        this.initialShapeCopy = null;
+        this.resizeOrigin = null;
     }
 
-    mouseleave(): void {
-        if (this.drawing) {
-            this.movingShape = null;
-            this.hoveredShape = null;
-            this.activeHandle = null;
-            this.resizeOrigin = null;
-            this.initialShapeCopy = null;
-            this.redraw();
-        }
-
-        this.marqueeStart = this.marqueeEnd = null;
-        this.redraw();
-    }
-
-    /* ─────────────────────────────────────────── */
-    /* rendering                                   */
-    /* ─────────────────────────────────────────── */
-    private redraw(): void {
-        const cvs = this.canvasRef.nativeElement;
-        this.ctx.clearRect(0, 0, cvs.width, cvs.height);
-
-        // рисуем все фигуры, кроме комментариев
-        const hideComments = this.store.hideComments$.value;
-        for (const s of this.shapes) {
-            if (hideComments && s.type === 'comment') {
-                continue;
-            }
-            this.drawShape(s);
-        }
-
-        // рисуем выделение
-        if (this.marqueeStart && this.marqueeEnd) {
-            const x = Math.min(this.marqueeStart.x, this.marqueeEnd.x);
-            const y = Math.min(this.marqueeStart.y, this.marqueeEnd.y);
-            const w = Math.abs(this.marqueeEnd.x - this.marqueeStart.x);
-            const h = Math.abs(this.marqueeEnd.y - this.marqueeStart.y);
-        
-            if (w > 2 || h > 2) {
-                this.ctx.save();
-                this.ctx.lineWidth = 2;
-                this.ctx.strokeStyle = '#0c8ce9';
-                this.ctx.fillStyle = 'rgba(12,140,233,0.12)';
-                this.ctx.setLineDash([]);
-                this.ctx.strokeRect(x, y, w, h);
-                this.ctx.fillRect(x, y, w, h);
-                this.ctx.restore();
-            }
-
-            return; // не рисуем hover/bb пока marquee активна
-        }
-
-        const sel = [...this.store.selectedIds$.value];
-        // не рисуем hover, если выбранно несколько объектов
-        if (!this.movingShape && this.hoveredShape && sel.length <= 1) {
-            this.drawHoverOutline(this.hoveredShape);
-        }
-
-        // рамка выделения
-        if (!this.movingShape && sel.length > 0) {
-            if (sel.length === 1) {
-                const shp = this.shapes.find(s => s.id === sel[0])!;
-                this.drawBoundingBox(shp);
-            } else {
-                const allBounds = sel.map(id => this.getBounds(this.shapes.find(s => s.id === id)!));
-                const u = allBounds.reduce((u, b) => ({
-                    left: Math.min(u.left, b.left),
-                    top: Math.min(u.top, b.top),
-                    right: Math.max(u.right, b.right),
-                    bottom: Math.max(u.bottom, b.bottom),
-                }), allBounds[0]);
-                this.drawBoundingBoxUnion(u);
-            }
-        }
-    }
-
-    private drawBoundingBoxUnion(b: Bounds): void {
-        this.ctx.save();
-        this.ctx.strokeStyle = '#0c8ce9';
-        this.ctx.lineWidth = 2;
-        this.ctx.setLineDash([]);
-        this.ctx.strokeRect(b.left, b.top, b.right - b.left, b.bottom - b.top);
-
-        // подпись по центру и с двумя знаками
-        const W = +((b.right - b.left).toFixed(2));
-        const H = +((b.bottom - b.top).toFixed(2));
-        const label = `${W} × ${H}`;
-        this.ctx.font = '11px "SF Pro Display"';
-        const textW = this.ctx.measureText(label).width;
-        const boxW = textW + 8, boxH = 18;
-        const x0 = b.left + ((b.right - b.left) - boxW) / 2;
-        const y0 = b.bottom + 6;
-        // фон скруглённый
-        const r = 2;
-        this.ctx.fillStyle = '#0c8ce9';
-        this.ctx.beginPath();
-        this.ctx.moveTo(x0 + r, y0);
-        this.ctx.lineTo(x0 + boxW - r, y0);
-        this.ctx.quadraticCurveTo(x0 + boxW, y0, x0 + boxW, y0 + r);
-        this.ctx.lineTo(x0 + boxW, y0 + boxH - r);
-        this.ctx.quadraticCurveTo(x0 + boxW, y0 + boxH, x0 + boxW - r, y0 + boxH);
-        this.ctx.lineTo(x0 + r, y0 + boxH);
-        this.ctx.quadraticCurveTo(x0, y0 + boxH, x0, y0 + boxH - r);
-        this.ctx.lineTo(x0, y0 + r);
-        this.ctx.quadraticCurveTo(x0, y0, x0 + r, y0);
-        this.ctx.closePath();
-        this.ctx.fill();
-        // текст
-        this.ctx.fillStyle = '#fff';
-        this.ctx.textBaseline = 'middle';
-        this.ctx.fillText(label, x0 + (boxW - textW) / 2, y0 + boxH / 2);
-        this.ctx.restore();
-    }
-
-    private drawShape(shape: Shape): void {
-        if ((shape as GroupShape).type === 'group') {
-            (shape as GroupShape).children.forEach((c) => this.drawShape(c));
-            return;
-        }
-        const s = shape as PrimitiveShape | VectorShape;
-
-        const st: ShapeStyle = {
-            stroke: 'transparent',
-            fill: '#d9d9d9',
-            lineWidth: 2,
-            alpha: 1,
-            fillEnabled: true,
-            strokeEnabled: false,
-            ...(s.style ?? {}),
-        };
-
-        /* устанавливаем прозрачность */
-        this.ctx.globalAlpha = st.alpha ?? 1;
-
-        /* — применяем stroke‑параметры — */
-        this.ctx.lineWidth = st.lineWidth ?? 2;
-        this.ctx.strokeStyle = st.strokeEnabled && st.stroke ? st.stroke : 'transparent';
-        this.ctx.fillStyle = st.fillEnabled && st.fill ? st.fill : 'transparent';
-
-        /* shadow */
-        if (st.shadow) {
-            this.ctx.shadowOffsetX = st.shadow.offsetX;
-            this.ctx.shadowOffsetY = st.shadow.offsetY;
-            this.ctx.shadowBlur = st.shadow.blur;
-            this.ctx.shadowColor = st.shadow.color;
-        } else {
-            this.ctx.shadowBlur = this.ctx.shadowOffsetX = this.ctx.shadowOffsetY = 0;
-            this.ctx.shadowColor = 'transparent';
-        }
-
-        switch (s.type) {
-            case 'vector': {
-                const v = shape as VectorShape;
-                this.ctx.save();
-                this.ctx.globalAlpha = st.alpha ?? 1;
-
-                // применяем позицию и масштаб
-                this.ctx.translate(v.x, v.y);
-                this.ctx.scale(v.scaleX, v.scaleY);
-
-                const p = new Path2D(v.path);
-                if (st.fillEnabled && st.fill) {
-                    this.ctx.fillStyle = st.fill;
-                    this.ctx.fill(p);
-                }
-                if (st.strokeEnabled && st.stroke) {
-                    this.ctx.lineWidth = st.lineWidth!;
-                    this.ctx.strokeStyle = st.stroke!;
-                    this.ctx.stroke(p);
-                }
-
-                this.ctx.restore();
-                break;
-            }
-            case 'image': {
-                const imgSh = s as ImageShape;
-
-                /* если изображение ещё не загружено – загружаем асинхронно */
-                if (!imgSh._img) {
-                    const im = new Image();
-                    im.onload = () => {
-                        imgSh._img = im;
-                        this.redraw(); // перерисуем, когда готово
-                    };
-                    im.src = imgSh.src;
-                    break; // пока нечего рисовать
-                }
-
-                this.ctx.drawImage(
-                    imgSh._img as HTMLImageElement,
-                    imgSh.x,
-                    imgSh.y,
-                    imgSh.w,
-                    imgSh.h
-                );
-                break;
-            }
-            case 'pen': {
-                this.ctx.beginPath();
-                s.points.forEach((p, i) =>
-                    i ? this.ctx.lineTo(p.x, p.y) : this.ctx.moveTo(p.x, p.y)
-                );
-                this.ctx.stroke();
-                break;
-            }
-            case 'line': {
-                this.ctx.beginPath();
-                this.ctx.moveTo(s.x1, s.y1);
-                this.ctx.lineTo(s.x2, s.y2);
-                this.ctx.stroke();
-                break;
-            }
-            case 'rect': {
-                const r = st.radius ?? 0;
-                if (r) {
-                    /* скруглённый rect */
-                    this.roundRectPath(s.x, s.y, s.w, s.h, r);
-                    this.ctx.fill();
-                    this.ctx.shadowColor = 'transparent';
-                    this.ctx.stroke();
-                } else {
-                    this.ctx.fillRect(s.x, s.y, s.w, s.h);
-                    this.ctx.shadowColor = 'transparent';
-                    this.ctx.strokeRect(s.x, s.y, s.w, s.h);
-                }
-                break;
-            }
-            case 'ellipse': {
-                this.ctx.beginPath();
-                this.ctx.ellipse(
-                    s.x + s.rx,
-                    s.y + s.ry,
-                    Math.abs(s.rx),
-                    Math.abs(s.ry),
-                    0,
-                    0,
-                    Math.PI * 2
-                );
-                this.ctx.fill();
-                this.ctx.shadowColor = 'transparent';
-                this.ctx.stroke();
-                break;
-            }
-            case 'text':
-            case 'comment': {
-                this.ctx.fillText(s.text, s.x, s.y);
-                if (s.type === 'comment') {
-                    const w = this.ctx.measureText(s.text).width;
-                    this.ctx.strokeRect(s.x - 4, s.y - 16, w + 8, 20);
-                }
-                break;
-            }
-        }
-
-        this.ctx.globalAlpha = 1;
-    }
-
-    /* ─────────────────────────────────────────── */
-    /* helpers                                    */
-    /* ─────────────────────────────────────────── */
-    private pointer(e: MouseEvent): Point {
-        const r = this.canvasRef.nativeElement.getBoundingClientRect();
-        return { x: e.clientX - r.left, y: e.clientY - r.top };
-    }
-
-    private initialShapeForDrag(p: Point): PrimitiveShape {
-        const common = {
-            id: Date.now(),
-            style: { ...this.store.activeStyle$.value },
-        };
-        switch (this.tool) {
-            case Tool.Rect:
-                return { ...common, type: 'rect', x: p.x, y: p.y, w: 0, h: 0 };
-            case Tool.Line:
-                return { ...common, type: 'line', x1: p.x, y1: p.y, x2: p.x, y2: p.y };
-            case Tool.Ellipse:
-                return { ...common, type: 'ellipse', x: p.x, y: p.y, rx: 0, ry: 0 };
-            default:
-                throw new Error('unexpected tool');
-        }
-    }
-
-    private updateDraggedShape(shape: PrimitiveShape, p: Point): void {
-        if ((shape as any).type === 'vector') return;
-
-        switch (shape.type) {
-            case 'rect':
-                shape.w = p.x - shape.x;
-                shape.h = p.y - shape.y;
-                break;
-            case 'line':
-                shape.x2 = p.x;
-                shape.y2 = p.y;
-                break;
-            case 'ellipse':
-                shape.rx = (p.x - shape.x) / 2;
-                shape.ry = (p.y - shape.y) / 2;
-                break;
-        }
-    }
-
-    /* — поиск фигуры для выбора — */
-    private findShape(p: Point): Shape | null {
-        for (let i = this.shapes.length - 1; i >= 0; i--) {
-            const s = this.shapes[i];
-
-            // если фигура выделена, перемещение можно начинать с любого места внутри ее границ
-            const bb = this.getBounds(s);
-            if (bb.left <= p.x && p.x <= bb.right && bb.top <= p.y && p.y <= bb.bottom) {
-                if (this.store.selectedIds$.value.has(s.id)) return s;
-            }
-
-            const tol = (s as PrimitiveShape | VectorShape).style?.lineWidth! / 2 + 5; // tolerance - 5px + stroke (если есть)
-            // для каждой фигуры проверяем попадание в геометрию + расширяем тест на tol
-            if (this.pointInsideShape(p, s)) return s;
-            // затем тестируем смещения по окр. контуру
-            const angles = [0, Math.PI / 2, Math.PI, 3 * Math.PI / 2];
-            for (const th of angles) {
-                const testP = { x: p.x + Math.cos(th) * tol, y: p.y + Math.sin(th) * tol };
-                if (this.pointInsideShape(testP, s)) return s;
-            }
-        }
-        return null;
-    }
-
-    private pointInsideShape(p: Point, s: Shape): boolean {
-        if ((s as GroupShape).type === 'group')
-            return (s as GroupShape).children.some((c) =>
-                this.pointInsideShape(p, c)
-            );
-
-        if (isVector(s)) {
-            const v = s as VectorShape;
-            const lx = (p.x - v.x) / v.scaleX;
-            const ly = (p.y - v.y) / v.scaleY;
-            const path = new Path2D(v.path);
-            return this.ctx.isPointInPath(path, lx, ly) || this.ctx.isPointInStroke(path, lx, ly);
-        }
-
-        const sh = s as PrimitiveShape | VectorShape;
-        switch (sh.type) {
-            case 'vector':
-                return false; // описываем выше
-            case 'image':
-                return (
-                    p.x >= sh.x && p.x <= sh.x + sh.w && p.y >= sh.y && p.y <= sh.y + sh.h
-                );
-            case 'rect':
-                return (
-                    p.x >= sh.x && p.x <= sh.x + sh.w && p.y >= sh.y && p.y <= sh.y + sh.h
-                );
-            case 'ellipse': {
-                const cx = sh.x + sh.rx,
-                    cy = sh.y + sh.ry;
-                const dx = p.x - cx,
-                    dy = p.y - cy;
-                return (dx * dx) / (sh.rx * sh.rx) + (dy * dy) / (sh.ry * sh.ry) <= 1;
-            }
-            case 'line':
-                return (
-                    this.pointToSegmentDistance(
-                        p,
-                        { x: sh.x1, y: sh.y1 },
-                        { x: sh.x2, y: sh.y2 }
-                    ) < 5
-                );
-            case 'pen':
-                return sh.points.some((pt) => Math.hypot(p.x - pt.x, p.y - pt.y) < 5);
-            case 'text':
-            case 'comment': {
-                const w = this.ctx.measureText(sh.text).width;
-                return (
-                    p.x >= sh.x && p.x <= sh.x + w && p.y <= sh.y && p.y >= sh.y - 16
-                );
-            }
-        }
-    }
-
-    private translateShape(s: Shape, newX: number, newY: number): void {
-        if ((s as GroupShape).type === 'group') {
-            /* смещение рассчитываем только один раз, иначе  
-               после перемещения первого дочернего объекта  
-               границы группы меняются и dx становится 0  */
-            const groupLeft = this.getShapeLeft(s);
-            const groupTop = this.getShapeTop(s);
-            const dx = newX - groupLeft;
-            const dy = newY - groupTop;
-
-            (s as GroupShape).children.forEach((c) => {
-                this.translateShape(
-                    c,
-                    this.getShapeLeft(c) + dx,
-                    this.getShapeTop(c) + dy
-                );
-            });
-            return;
-        }
-
-        if (isVector(s)) {
-            s.x = newX;
-            s.y = newY;
-            return;
-        }
-
-        switch (s.type) {
-            case 'image':
-            case 'rect':
-            case 'ellipse':
-            case 'text':
-            case 'comment':
-                (s as any).x = newX;
-                (s as any).y = newY;
-                break;
-            case 'line': {
-                const dx = newX - this.getShapeLeft(s);
-                const dy = newY - this.getShapeTop(s);
-                s.x1 += dx;
-                s.y1 += dy;
-                s.x2 += dx;
-                s.y2 += dy;
-                break;
-            }
-            case 'pen': {
-                const dx = newX - this.getShapeLeft(s);
-                const dy = newY - this.getShapeTop(s);
-                s.points.forEach((pt) => {
-                    pt.x += dx;
-                    pt.y += dy;
-                });
-                break;
-            }
-        }
-    }
-
-    private getBounds(s: Shape): Bounds {
-        if ((s as GroupShape).type === 'group') {
-            const arr = (s as GroupShape).children.map((c) => this.getBounds(c));
-            return {
-                left: Math.min(...arr.map((b) => b.left)),
-                top: Math.min(...arr.map((b) => b.top)),
-                right: Math.max(...arr.map((b) => b.right)),
-                bottom: Math.max(...arr.map((b) => b.bottom)),
-            };
-        }
-
-        if (isVector(s)) {
-            const v = s as VectorShape;
-
-            const svgNS = 'http://www.w3.org/2000/svg';
-            const tmpSvg = document.createElementNS(svgNS, 'svg');
-            const pathEl = document.createElementNS(svgNS, 'path');
-            pathEl.setAttribute('d', v.path);
-            tmpSvg.appendChild(pathEl);
-            document.body.appendChild(tmpSvg);
-
-            const box = pathEl.getBBox();
-
-            document.body.removeChild(tmpSvg);
-
-            const scaledX = box.x * v.scaleX + v.x;
-            const scaledY = box.y * v.scaleY + v.y;
-            const scaledW = box.width * v.scaleX;
-            const scaledH = box.height * v.scaleY;
-
-            return {
-                left: scaledX,
-                top: scaledY,
-                right: scaledX + scaledW,
-                bottom: scaledY + scaledH,
-            };
-        }
-
-        const sh = s as PrimitiveShape;
-        switch (sh.type) {
-            case 'rect':
-                return {
-                    left: sh.x,
-                    top: sh.y,
-                    right: sh.x + sh.w,
-                    bottom: sh.y + sh.h,
-                };
-            case 'ellipse':
-                return {
-                    left: sh.x,
-                    top: sh.y,
-                    right: sh.x + sh.rx * 2,
-                    bottom: sh.y + sh.ry * 2,
-                };
-            case 'image':
-                return {
-                    left: sh.x,
-                    top: sh.y,
-                    right: sh.x + sh.w,
-                    bottom: sh.y + sh.h,
-                };
-            case 'line':
-                return {
-                    left: Math.min(sh.x1, sh.x2),
-                    top: Math.min(sh.y1, sh.y2),
-                    right: Math.max(sh.x1, sh.x2),
-                    bottom: Math.max(sh.y1, sh.y2),
-                };
-            case 'pen':
-                return {
-                    left: Math.min(...sh.points.map((p) => p.x)),
-                    top: Math.min(...sh.points.map((p) => p.y)),
-                    right: Math.max(...sh.points.map((p) => p.x)),
-                    bottom: Math.max(...sh.points.map((p) => p.y)),
-                };
-            case 'text':
-            case 'comment': {
-                const w = this.ctx.measureText(sh.text).width;
-                return { left: sh.x, top: sh.y - 16, right: sh.x + w, bottom: sh.y };
-            }
-        }
-    }
-
-    /* ---------- drawing selection ---------- */
-    private drawBoundingBox(s: Shape): void {
-        const b = this.getBounds(s);
-        this.ctx.save();
-
-        /* сброс тени */
-        this.ctx.shadowBlur = 0; this.ctx.shadowOffsetX = 0; this.ctx.shadowOffsetY = 0; this.ctx.shadowColor = 'transparent';
-
-        this.ctx.strokeStyle = '#0c8ce9';
-        this.ctx.lineWidth = 2;
-        this.ctx.strokeRect(b.left, b.top, b.right - b.left, b.bottom - b.top);
-
-        // подпись размеров [W x H]
-        const W = +((b.right - b.left).toFixed(2));
-        const H = +((b.bottom - b.top).toFixed(2));
-        const label = `${W} × ${H}`;
-        this.ctx.font = '11px "SF Pro Display"';
-        const textMetrics = this.ctx.measureText(label);
-        const textW = textMetrics.width;
-        const boxW = textW + 8; // 4px по бокам
-        const boxH = 18;
-        const x = b.left + (W - boxW) / 2;  // центрируем по ширине
-        const y = b.bottom + 6;           // от рамки вниз на 6px
-
-        // фон
-        const r = 4; // радиус скругления
-        this.ctx.fillStyle = '#0c8ce9';
-        this.ctx.beginPath();
-        this.ctx.moveTo(x + r, y);
-        this.ctx.lineTo(x + boxW - r, y);
-        this.ctx.quadraticCurveTo(x + boxW, y, x + boxW, y + r);
-        this.ctx.lineTo(x + boxW, y + boxH - r);
-        this.ctx.quadraticCurveTo(x + boxW, y + boxH, x + boxW - r, y + boxH);
-        this.ctx.lineTo(x + r, y + boxH);
-        this.ctx.quadraticCurveTo(x, y + boxH, x, y + boxH - r);
-        this.ctx.lineTo(x, y + r);
-        this.ctx.quadraticCurveTo(x, y, x + r, y);
-        this.ctx.closePath();
-        this.ctx.fill();
-
-        // текст
-        this.ctx.fillStyle = '#fff';
-        this.ctx.textBaseline = 'middle';
-        this.ctx.fillText(label, x + boxW / 2 - textW / 2, y + boxH / 2 + 1);
-
-        /* ручки */
-        this.ctx.lineWidth = 1;
-        const hs = this.HANDLE;
-        const half = hs / 2;
-        const pts = [
-            { x: b.left, y: b.top, tag: 'nw' },
-            { x: b.right, y: b.top, tag: 'ne' },
-            { x: b.right, y: b.bottom, tag: 'se' },
-            { x: b.left, y: b.bottom, tag: 'sw' },
-        ] as const;
-
-        this.ctx.fillStyle = '#fff';
-        this.ctx.strokeStyle = '#0c8ce9';
-        pts.forEach((pt) => {
-            this.ctx.fillRect(pt.x - half, pt.y - half, hs, hs);
-            this.ctx.strokeRect(pt.x - half, pt.y - half, hs, hs);
+    private moveSelectedItems(delta: paper.Point): void {
+        if (!this.movingItem) return;
+        this.selectedItems.forEach(item => {
+            item.position = item.position.add(delta);
         });
-        this.ctx.restore();
     }
 
-    /* обводка при наведении на объект */
-    private drawHoverOutline(shape: Shape): void {
-        this.ctx.save();
-        this.ctx.lineWidth = 2;
-        this.ctx.strokeStyle = '#0c8ce9';
-        this.ctx.setLineDash([]);
-        this.ctx.globalAlpha = 1;
+    private resizeShape(item: PaperItemWithId, point: paper.Point): void {
+        if (!this.activeHandle || !this.initialBounds) return;
 
-        // отключаем тень
-        this.ctx.shadowBlur = this.ctx.shadowOffsetX = this.ctx.shadowOffsetY = 0;
+        const originalBounds = this.initialBounds;
+        const newBounds = originalBounds.clone();
 
-        // обводка для группы
-        if ((shape as GroupShape).type == 'group') {
-            const sb = this.getBounds(shape);
-            this.ctx.strokeRect(sb.left, sb.top, sb.right - sb.left, sb.bottom - sb.top);
-            this.ctx.restore();
-            return;
+        switch (this.activeHandle) {
+            case 'nw':
+                newBounds.topLeft = point;
+                break;
+            case 'ne':
+                newBounds.topRight = point;
+                break;
+            case 'se':
+                newBounds.bottomRight = point;
+                break;
+            case 'sw':
+                newBounds.bottomLeft = point;
+                break;
         }
 
-        // рисуем по типу shape, аналогично drawShape но только stroke и без fill
-        switch (shape.type) {
-            case 'vector':
-                const v = shape as VectorShape;
-                const M = this.ctx.getTransform();
-                const orig = new Path2D(v.path);
-                const P = new Path2D();
-                P.addPath(orig, new DOMMatrix()
-                    .translate(v.x, v.y)
-                    .scale(v.scaleX, v.scaleY)
-                );
-                const P2 = new Path2D();
-                P2.addPath(P, M);
-                this.ctx.setTransform(1, 0, 0, 1, 0, 0);
-                this.ctx.lineWidth = 2;
-                this.ctx.stroke(P2);
-                this.ctx.setTransform(M);
-                break;                
-            case 'rect':
-                this.roundRectPath(shape.x, shape.y, shape.w, shape.h, shape.style.radius || 0);
-                this.ctx.stroke();
-                break;
-            case 'ellipse':
-                this.ctx.beginPath();
-                this.ctx.ellipse(
-                    shape.x + shape.rx,
-                    shape.y + shape.ry,
-                    Math.abs(shape.rx),
-                    Math.abs(shape.ry),
-                    0,
-                    0,
-                    Math.PI * 2
-                );
-                this.ctx.stroke();
-                break;
-            case 'line':
-                this.ctx.beginPath();
-                this.ctx.moveTo(shape.x1, shape.y1);
-                this.ctx.lineTo(shape.x2, shape.y2);
-                this.ctx.stroke();
-                break;
-            case 'pen':
-                this.ctx.beginPath();
-                shape.points.forEach((pt, i) => i ? this.ctx.lineTo(pt.x, pt.y) : this.ctx.moveTo(pt.x, pt.y));
-                this.ctx.stroke();
-                break;
-            case 'image':
-            case 'text':
-            case 'comment':
-                // для текста просто повторим bounding box
-                const b = this.getBounds(shape);
-                this.ctx.strokeRect(b.left, b.top, b.right - b.left, b.bottom - b.top);
-                break;
-        }
-        this.ctx.restore();
+        // Ensure minimum size
+        if (newBounds.width < 10) newBounds.width = 10;
+        if (newBounds.height < 10) newBounds.height = 10;
+
+        item.bounds = newBounds;
+        this.updateSelection();
     }
 
-    /* ---------- hit-test по ручкам ---------- */
-    private handleAtPoint(p: Point): 'nw' | 'ne' | 'se' | 'sw' | null {
-        const ids = [...this.store.selectedIds$.value];
-        if (ids.length !== 1) return null;
-        const shp = this.shapes.find((s) => s.id === ids[0]);
-        if (!shp) return null;
+    private hitTestHandle(point: paper.Point): 'nw' | 'ne' | 'se' | 'sw' | null {
+        if (this.selectedItems.size !== 1) return null;
 
-        const b = this.getBounds(shp);
-        const half = this.HANDLE / 2;
-        const tests: { [k: string]: Bounds } = {
-            nw: {
-                left: b.left - half,
-                top: b.top - half,
-                right: b.left + half,
-                bottom: b.top + half,
-            },
-            ne: {
-                left: b.right - half,
-                top: b.top - half,
-                right: b.right + half,
-                bottom: b.top + half,
-            },
-            se: {
-                left: b.right - half,
-                top: b.bottom - half,
-                right: b.right + half,
-                bottom: b.bottom + half,
-            },
-            sw: {
-                left: b.left - half,
-                top: b.bottom - half,
-                right: b.left + half,
-                bottom: b.bottom + half,
-            },
+        const item = Array.from(this.selectedItems)[0];
+        const bounds = item.bounds;
+        const expandedBounds = bounds.expand(this.boundingBoxConfig.padding);
+        const halfHandle = this.boundingBoxConfig.handleSize / 2;
+
+        const handles = {
+            nw: expandedBounds.topLeft,
+            ne: expandedBounds.topRight,
+            se: expandedBounds.bottomRight,
+            sw: expandedBounds.bottomLeft
         };
-        for (const k of Object.keys(tests) as ('nw' | 'ne' | 'se' | 'sw')[]) {
-            const t = tests[k];
-            if (p.x >= t.left && p.x <= t.right && p.y >= t.top && p.y <= t.bottom)
-                return k;
+
+        for (const [handle, pos] of Object.entries(handles)) {
+            const handleBounds = new paper.Rectangle(
+                pos.x - halfHandle,
+                pos.y - halfHandle,
+                this.boundingBoxConfig.handleSize,
+                this.boundingBoxConfig.handleSize
+            );
+            if (handleBounds.contains(point)) {
+                return handle as 'nw' | 'ne' | 'se' | 'sw';
+            }
         }
+
         return null;
     }
 
-    /** Изменяем размеры выбранной фигуры, тянув за угловую ручку  */
-    private updateResizedShape(s: Shape, p: Point): void {
-        /* если нет копии исходной фигуры или ручка не активна — выходим */
-        if (!this.initialShapeCopy || !this.activeHandle || !this.resizeOrigin)
-            return;
+    private updateSelection(): void {
+        // Delegate selection rendering to service
+        this.selectionRenderer.renderSelection(
+            this.selectionLayer,
+            this.selectedItems,
+            this.boundingBoxConfig as BoundingBoxConfig
+        );
+    }
+
+    private updateCanvas(): void {
+        const shapes = this.store.shapes$.value;
+        // console.log('Updating canvas, shapes:', shapes);
         
-        const orig = this.initialShapeCopy; // «снимок» до начала resize
-        const oB = this.getBounds(orig); // исходный bounding-box
+        // Clear layers
+        this.mainLayer.removeChildren();
+        this.guideLayer.removeChildren();
+        this.selectionLayer.removeChildren();
 
-        const dx = p.x - this.resizeOrigin.x; // смещение курсора
-        const dy = p.y - this.resizeOrigin.y;
+        // Recreate all shapes from store
+        shapes.forEach(shape => {
+            if (this.store.hideComments$.value && shape.type === 'text') return;
+            
+            // Delegate creation to ShapeRendererService
+            const item = this.renderer.createPaperItem(shape);
+            if (item) {
+                (item as PaperItemWithId).shapeId = shape.id;
+                // Store Paper.js item reference for UI (e.g., sidebar dims)
+                shape.paperObject = item;
+                this.mainLayer.addChild(item);
+                // console.log('Added item to mainLayer:', { id: shape.id, type: shape.type });
+            } else {
+                console.warn('Failed to create item for shape:', shape);
+            }
+        });
 
-        /* для левой/верхней ручек знак отрицательный */
-        const signX =
-            this.activeHandle === 'ne' || this.activeHandle === 'se' ? 1 : -1;
-        const signY =
-            this.activeHandle === 'se' || this.activeHandle === 'sw' ? 1 : -1;
+        // Render selection visuals
+        this.selectionRenderer.renderSelection(this.selectionLayer, this.selectedItems, this.boundingBoxConfig as BoundingBoxConfig);
 
-        const newW = Math.max(10, oB.right - oB.left + dx * signX); // не даём сжать <10 px
-        const newH = Math.max(10, oB.bottom - oB.top + dy * signY);
-
-        /* коэффициенты масштабирования (могут пригодиться для будущих типов) */
-        const kx = newW / (oB.right - oB.left);
-        const ky = newH / (oB.bottom - oB.top);
-
-        if (isVector(s)) {
-            const origVector = orig as VectorShape; 
-            const rawW = (oB.right - oB.left) / origVector.scaleX;
-            const rawH = (oB.bottom - oB.top) / origVector.scaleY;
-        
-            if (signX < 0) s.x = oB.right - newW;
-            if (signY < 0) s.y = oB.bottom - newH;
-        
-            s.scaleX = newW / rawW;
-            s.scaleY = newH / rawH;
-            return;
+        // Render marquee selection
+        if (this.marqueeActive && this.marqueeStart && this.marqueeEnd) {
+            this.selectionRenderer.renderMarquee(this.guideLayer, this.marqueeStart, this.marqueeEnd);
         }
 
-        /******************  рекурсивная функция, применяющая изменения  ******************/
-        const apply = (target: Shape): void => {
-            /* если встретилась вложенная группа — спускаемся внутрь */
-            if ((target as GroupShape).type === 'group') {
-                (target as GroupShape).children.forEach(apply);
-                return;
-            }
+        // Render hover outline only when Move tool active
+        if (this.tool === Tool.Move) {
+            this.selectionRenderer.renderHover(this.guideLayer, this.hoveredItem, this.boundingBoxConfig as BoundingBoxConfig);
+        }
 
-            const t = target as PrimitiveShape;
+        // --- Preview for currentPath (pen, rect, ellipse) ---
+        if (this.currentPath) {
+            // Re-add preview path after layer cleared
+            this.mainLayer.addChild(this.currentPath);
+            this.currentPath.bringToFront();
+            this.currentPath.selected = false;
+        }
+    }
 
-            switch (t.type) {
-                /* ─────────── прямоугольник ─────────── */
-                case 'rect':
-                    if (signX < 0) t.x = oB.right - newW;
-                    if (signY < 0) t.y = oB.bottom - newH;
-                    t.w = newW;
-                    t.h = newH;
-                    break;
-
-                /* ─────────── эллипс ─────────── */
-                case 'ellipse':
-                    if (signX < 0) t.x = oB.right - newW;
-                    if (signY < 0) t.y = oB.bottom - newH;
-                    t.rx = newW / 2;
-                    t.ry = newH / 2;
-                    break;
-
-                /* ─────────── изображение ─────────── */
-                case 'image':
-                    if (signX < 0) t.x = oB.right - newW;
-                    if (signY < 0) t.y = oB.bottom - newH;
-                    t.w = newW;
-                    t.h = newH;
-                    break;
-
-                /* ─────────── линия ─────────── */
-                case 'line':
-                    if (this.activeHandle === 'nw' || this.activeHandle === 'sw') {
-                        t.x1 = oB.right - newW;
-                    } else {
-                        t.x2 = oB.left + newW;
-                    }
-                    if (this.activeHandle === 'nw' || this.activeHandle === 'ne') {
-                        t.y1 = oB.bottom - newH;
-                    } else {
-                        t.y2 = oB.top + newH;
-                    }
-                    break;
-
-                case 'pen':
-                case 'text':
-                case 'comment':
-                    if (signX < 0) {
-                        this.translateShape(t, oB.right - newW, this.getShapeTop(t));
-                    }
-                    if (signY < 0) {
-                        this.translateShape(t, this.getShapeLeft(t), oB.bottom - newH);
-                    }
-                    break;
-            }
+    private pathToShape(path: paper.Path): Shape {
+        const id = Date.now();
+        const style: ShapeStyle = {
+            stroke: path.strokeColor?.toCSS(true),
+            strokeWidth: path.strokeWidth,
+            fill: path.fillColor?.toCSS(true),
+            opacity: path.opacity,
+            strokeEnabled: !!path.strokeColor,
+            fillEnabled: !!path.fillColor
         };
 
-        apply(s);
-        this.store.shapes$.next(this.store.shapes$.value);
-    }
+        console.log('Converting path to shape with style:', style);
 
-    private getShapeLeft(s: Shape): number {
-        if ((s as GroupShape).type === 'group')
-            return Math.min(
-                ...(s as GroupShape).children.map((c) => this.getShapeLeft(c))
-            );
-
-        if (isVector(s)) {
-            return s.x;
+        // Check the current tool to determine shape type
+        if (this.tool === Tool.Rect || path.data?.type === 'rectangle') {
+            console.log('Converting Rectangle');
+            const shape = {
+                id,
+                type: 'rectangle',
+                topLeft: { x: path.bounds.x, y: path.bounds.y },
+                size: { width: path.bounds.width, height: path.bounds.height },
+                style
+            } as RectangleShape;
+            console.log('Created rectangle shape:', shape);
+            return shape;
+        } else if (this.tool === Tool.Ellipse || path.data?.type === 'ellipse') {
+            console.log('Converting Ellipse');
+            const shape = {
+                id,
+                type: 'ellipse',
+                center: { x: path.bounds.center.x, y: path.bounds.center.y },
+                radius: { width: path.bounds.width / 2, height: path.bounds.height / 2 },
+                style
+            } as EllipseShape;
+            console.log('Created ellipse shape:', shape);
+            return shape;
         }
 
-        const sh = s as PrimitiveShape;
-        switch (sh.type) {
-            case 'image':
-                return sh.x;
-            case 'rect':
-                return sh.x;
-            case 'ellipse':
-                return sh.x;
-            case 'line':
-                return Math.min(sh.x1, sh.x2);
-            case 'pen':
-                return Math.min(...sh.points.map((p) => p.x));
-            case 'text':
-            case 'comment':
-                return sh.x;
-        }
-    }
-    private getShapeTop(s: Shape): number {
-        if ((s as GroupShape).type === 'group')
-            return Math.min(
-                ...(s as GroupShape).children.map((c) => this.getShapeTop(c))
-            );
-
-        if (isVector(s)) {
-            return s.y;
-        }
-
-        const sh = s as PrimitiveShape;
-        switch (sh.type) {
-            case 'image':
-                return sh.y;
-            case 'rect':
-                return sh.y;
-            case 'ellipse':
-                return sh.y;
-            case 'line':
-                return Math.min(sh.y1, sh.y2);
-            case 'pen':
-                return Math.min(...sh.points.map((p) => p.y));
-            case 'text':
-            case 'comment':
-                return sh.y - 16;
-        }
-    }
-
-    /* расстояние от точки до сегмента AB */
-    private pointToSegmentDistance(p: Point, A: Point, B: Point): number {
-        const l2 = (B.x - A.x) ** 2 + (B.y - A.y) ** 2;
-        if (l2 === 0) return Math.hypot(p.x - A.x, p.y - A.y);
-        let t = ((p.x - A.x) * (B.x - A.x) + (p.y - A.y) * (B.y - A.y)) / l2;
-        t = Math.max(0, Math.min(1, t));
-        const proj = { x: A.x + t * (B.x - A.x), y: A.y + t * (B.y - A.y) };
-        return Math.hypot(p.x - proj.x, p.y - proj.y);
-    }
-
-    private roundRectPath(x: number, y: number, w: number, h: number, r: number) {
-        const ctx = this.ctx;
-        ctx.beginPath();
-        ctx.moveTo(x + r, y);
-        ctx.lineTo(x + w - r, y);
-        ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-        ctx.lineTo(x + w, y + h - r);
-        ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-        ctx.lineTo(x + r, y + h);
-        ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-        ctx.lineTo(x, y + r);
-        ctx.quadraticCurveTo(x, y, x + r, y);
-    }
-
-    /* ─────────────────────────────────────────── */
-    /* responsive resize                           */
-    /* ─────────────────────────────────────────── */
-    @HostListener('window:resize')
-    onResize(): void {
-        const cvs = this.canvasRef.nativeElement;
-        // сохраняем старый контекст
-        const temp = document.createElement('canvas');
-        temp.width = cvs.width;
-        temp.height = cvs.height;
-        temp.getContext('2d')?.drawImage(cvs, 0, 0);
-
-        cvs.width = cvs.offsetWidth;
-        cvs.height = cvs.offsetHeight;
-
-        this.ctx = cvs.getContext('2d')!;
-        this.ctx.drawImage(temp, 0, 0);
-        this.redraw();
+        // Default to path
+        console.log('Converting Path');
+        const shape = {
+            id,
+            type: 'path',
+            segments: path.segments.map(seg => ({
+                point: { x: seg.point.x, y: seg.point.y },
+                handleIn: seg.handleIn ? { x: seg.handleIn.x, y: seg.handleIn.y } : undefined,
+                handleOut: seg.handleOut ? { x: seg.handleOut.x, y: seg.handleOut.y } : undefined
+            })),
+            closed: path.closed,
+            style
+        } as PathShape;
+        console.log('Created path shape:', shape);
+        return shape;
     }
 
     @HostListener('window:keydown', ['$event'])
-    handleKeyDown(e: KeyboardEvent): void {
-        if ((e.key === 'Delete' || e.key === 'Backspace') && !e.repeat) {
-            this.deleteSelected();
-            e.preventDefault();
+    handleKeyDown(event: KeyboardEvent): void {
+        if ((event.key === 'Delete' || event.key === 'Backspace') && !event.repeat) {
+            // Удаляем выделенные объекты
+            const selectedIds = Array.from(this.store.selectedIds$.value);
+            if (selectedIds.length > 0) {
+                this.store.updateShapes(shapes => {
+                    // Remove all selected shapes in place
+                    for (let i = shapes.length - 1; i >= 0; i--) {
+                        if (selectedIds.includes(shapes[i].id)) {
+                            shapes.splice(i, 1);
+                        }
+                    }
+                });
+                this.selectedItems.clear();
+                this.store.clearSelection();
+                this.hoveredItem = null; // Clear hover outline after deletion
+                this.updateCanvas();
+            }
+            event.preventDefault();
         }
     }
-}
+
+    @HostListener('window:resize')
+    onResize(): void {
+        const canvas = this.canvasRef.nativeElement;
+        this.project.view.viewSize = new paper.Size(
+            canvas.offsetWidth,
+            canvas.offsetHeight
+        );
+        this.updateCanvas();
+    }
+
+    // Helper methods to streamline event conversion
+    private getPoint(event: MouseEvent): paper.Point {
+        const rect = this.canvasRef.nativeElement.getBoundingClientRect();
+        return new paper.Point(event.clientX - rect.left, event.clientY - rect.top);
+    }
+
+    private mapModifiers(event: MouseEvent): Record<string, boolean> {
+        return {
+            shift: event.shiftKey,
+            control: event.ctrlKey,
+            alt: event.altKey,
+            command: event.metaKey,
+            capsLock: event.getModifierState('CapsLock'),
+            space: event.getModifierState(' '),
+            option: event.altKey
+        };
+    }
+
+    private createToolEvent(event: MouseEvent, type: 'mousedown' | 'mousemove' | 'mouseup'): paper.ToolEvent {
+        const point = this.getPoint(event);
+        const lastPoint = this.lastMousePoint || point;
+        const downPoint = this.dragStartPoint || point;
+        const delta = this.lastMousePoint ? point.subtract(this.lastMousePoint) : new paper.Point(0, 0);
+        const modifiers = this.mapModifiers(event);
+        return {
+            point,
+            lastPoint,
+            downPoint,
+            middlePoint: point,
+            delta,
+            count: 0,
+            item: null,
+            type,
+            event: event as unknown as Event,
+            modifiers,
+            timeStamp: event.timeStamp,
+            preventDefault: () => event.preventDefault(),
+            stopPropagation: () => event.stopPropagation(),
+            stop: () => {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+        } as unknown as paper.ToolEvent;
+    }
+
+    // Encapsulate store subscriptions to declutter lifecycle hook
+    private subscribeToStore(): void {
+        this.subscriptions.push(
+            this.store.shapes$.subscribe(() => {
+                console.log('Shapes updated in store, updating canvas');
+                this.updateCanvas();
+
+                // Re-sync selectedItems with store after shapes update
+                const selectedIds = this.store.selectedIds$.value;
+                this.selectedItems.clear();
+                const children = this.mainLayer.children;
+                selectedIds.forEach(id => {
+                    for (const item of children) {
+                        const paperItem = item as PaperItemWithId;
+                        if (paperItem.shapeId === id) {
+                            this.selectedItems.add(paperItem);
+                            break;
+                        }
+                    }
+                });
+                this.updateSelection();
+            }),
+            this.store.selectedIds$.subscribe((selectedIds) => {
+                this.selectedItems.clear();
+                const shapes = this.mainLayer?.children || [];
+                selectedIds.forEach(id => {
+                    for (const item of shapes) {
+                        const paperItem = item as PaperItemWithId;
+                        if (paperItem.shapeId === id) {
+                            this.selectedItems.add(paperItem);
+                            break;
+                        }
+                    }
+                });
+                this.updateSelection();
+            }),
+            this.store.hideComments$.subscribe(() => {
+                console.log('Comment visibility updated');
+                this.updateCanvas();
+            }),
+            this.store.activeStyle$.subscribe(() => {
+                console.log('Active style changed, updating canvas');
+                this.updateCanvas();
+            })
+        );
+    }
+
+    /**
+     * General resizing logic adapted from old updateResizedShape(s, p)
+     */
+    private updateResizedShape(p: paper.Point): void {
+        const orig = this.initialShapeCopy!;
+        const oB = this.initialBounds!;
+        const id = this.resizingItem!.shapeId!;
+        const dx = p.x - this.resizeOrigin!.x;
+        const dy = p.y - this.resizeOrigin!.y;
+        const signX = (this.activeHandle === 'ne' || this.activeHandle === 'se') ? 1 : -1;
+        const signY = (this.activeHandle === 'se' || this.activeHandle === 'sw') ? 1 : -1;
+        const newW = Math.max(10, oB.width + dx * signX);
+        const newH = Math.max(10, oB.height + dy * signY);
+        const kx = newW / oB.width;
+        const ky = newH / oB.height;
+        this.store.updateShapes(shapes => {
+            const s = shapes.find(sh => sh.id === id);
+            if (!s) return;
+            switch (s.type) {
+                case 'rectangle': {
+                    if (signX < 0) s.topLeft.x = oB.x + oB.width - newW;
+                    else s.topLeft.x = oB.x;
+                    s.size.width = newW;
+                    if (signY < 0) s.topLeft.y = oB.y + oB.height - newH;
+                    else s.topLeft.y = oB.y;
+                    s.size.height = newH;
+                    break;
+                }
+                case 'ellipse': {
+                    if (signX < 0) s.center.x = oB.x + oB.width - newW / 2;
+                    else s.center.x = oB.x + newW / 2;
+                    s.radius.width = newW / 2;
+                    if (signY < 0) s.center.y = oB.y + oB.height - newH / 2;
+                    else s.center.y = oB.y + newH / 2;
+                    s.radius.height = newH / 2;
+                    break;
+                }
+                case 'image': {
+                    // Resize image: update center position and size
+                    if (signX < 0) s.position.x = oB.x + oB.width - newW / 2;
+                    else s.position.x = oB.x + newW / 2;
+                    if (signY < 0) s.position.y = oB.y + oB.height - newH / 2;
+                    else s.position.y = oB.y + newH / 2;
+                    s.size.width = newW;
+                    s.size.height = newH;
+                    break;
+                }
+                case 'path': {
+                    const pathOrig = orig.paperObject as unknown as paper.Path;
+                    const pathS = s.paperObject as unknown as paper.Path;
+                
+                    // Determine pivot corner (opposite handle)
+                    const pivot = new paper.Point(
+                        signX > 0 ? oB.left : oB.right,
+                        signY > 0 ? oB.top : oB.bottom
+                    );
+                
+                    // Scale the cloned path
+                    const scaledPath = pathOrig.clone();
+                    scaledPath.scale(kx, ky, pivot);
+                
+                    // Assign proper Segment instances to match type
+                    pathS.segments = scaledPath.segments.map(seg => new paper.Segment(
+                        seg.point.clone(),
+                        seg.handleIn ? seg.handleIn.clone() : undefined,
+                        seg.handleOut ? seg.handleOut.clone() : undefined
+                    ));
+                    pathS.closed = scaledPath.closed;
+                
+                    // Cleanup temporary path
+                    scaledPath.remove();
+                    break;
+                }
+            }
+        });
+    }
+} 

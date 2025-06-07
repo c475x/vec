@@ -6,13 +6,15 @@
 
     <div class="spacer"></div>
 
-    <button (click)="importImage()">
-        <img src="icons/image-add.svg" alt="add image" />
+    <button (click)="onImportImage()">
+        <img src="icons/image-add.svg" alt="import image" />
     </button>
-    <button (click)="loadJSON()">
+    <input type="file" #fileInput accept="image/*,image/svg+xml" hidden (change)="onFileSelected($event)" />
+
+    <button (click)="exportService.importJSON()">
         <img src="icons/load.svg" alt="load" />
     </button>
-    <button (click)="exportJSON()">
+    <button (click)="exportService.exportJSON()">
         <img src="icons/save.svg" alt="save" />
     </button>
 </div>

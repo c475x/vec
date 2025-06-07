@@ -2,33 +2,34 @@ import { Injectable } from '@angular/core';
 import { BehaviorSubject } from 'rxjs';
 import { Shape, ShapeStyle } from '../models/shape.model';
 import { Tool } from '../models/tool.enum';
+import * as paper from 'paper';
 
 @Injectable({ providedIn: 'root' })
 export class CanvasStore {
-    /* ────────── состояние холста ────────── */
+    /* Canvas state */
     readonly shapes$ = new BehaviorSubject<Shape[]>([]);
     readonly selectedIds$ = new BehaviorSubject<Set<number>>(new Set());
 
-    /* стиль, который получит КАЖДАЯ новая фигура,  
-       если на холсте сейчас ничего не выделено        */
+    /* Active style that will be applied to new shapes when nothing is selected */
     readonly activeStyle$ = new BehaviorSubject<ShapeStyle>({
         stroke: '#000000',
         fill: '#d9d9d9',
-        lineWidth: 2,
+        strokeWidth: 2,
         fillEnabled: true,
-        strokeEnabled: false,
-        alpha: 1,
-        shadow: { offsetX: 0, offsetY: 0, blur: 0, color: '#000000' }
+        strokeEnabled: true,
+        opacity: 1,
+        shadowColor: '#000000',
+        shadowBlur: 0,
+        shadowOffset: { x: 0, y: 0 }
     });
 
-    /* выбранный инструмент (нужен сайдбару, чтобы  
-       показать/скрыть релевантные опции)              */
+    /* Active tool (needed by sidebar to show/hide relevant options) */
     readonly activeTool$ = new BehaviorSubject<Tool>(Tool.Move);
 
-    /* прятать ли комментарии (нужен в экспорте) */
+    /* Whether to hide comments (needed for export) */
     hideComments$ = new BehaviorSubject<boolean>(false);
 
-    /* ────────── helpers ────────── */
+    /* ────────── Helpers ────────── */
     updateShapes(mutator: (arr: Shape[]) => void): void {
         const copy = [...this.shapes$.value];
         mutator(copy);
@@ -39,34 +40,46 @@ export class CanvasStore {
         this.activeTool$.next(t);
     }
 
-    /* ────────── selection ────────── */
+    /* ────────── Selection ────────── */
     clearSelection(): void {
         this.selectedIds$.next(new Set());
     }
+
     select(id: number): void {
         this.selectedIds$.next(new Set([id]));
     }
+
     toggle(id: number): void {
         const s = new Set(this.selectedIds$.value);
         s.has(id) ? s.delete(id) : s.add(id);
         this.selectedIds$.next(s);
     }
 
-    /* ────────── style patch ──────────  
-       Если что-то выделено – меняем стиль выделенных фигур.  
-       Если нет – запоминаем как «активный» стиль, который  
-       будут наследовать все новые фигуры.                 */
+    /* ────────── Style Updates ────────── */
     updateStyle(patch: Partial<ShapeStyle>): void {
         const sel = this.selectedIds$.value;
 
         if (sel.size) {
-            const updated: Shape[] = this.shapes$.value.map((sh) =>
-                sel.has(sh.id)
-                    ? ({ ...sh, style: { ...(sh.style ?? {}), ...patch } } as Shape)
-                    : sh
-            );
-            this.shapes$.next(updated);
+            // Update style of selected shapes
+            this.updateShapes((arr) => {
+                arr.forEach((sh) => {
+                    if (sel.has(sh.id)) {
+                        // Merge style patch
+                        const newStyle = { ...sh.style, ...patch } as ShapeStyle;
+                        // If enabling fill but no color set, use active default
+                        if (patch.fillEnabled && !newStyle.fill) {
+                            newStyle.fill = this.activeStyle$.value.fill;
+                        }
+                        // If enabling stroke but no color set, use active default
+                        if (patch.strokeEnabled && !newStyle.stroke) {
+                            newStyle.stroke = this.activeStyle$.value.stroke;
+                        }
+                        sh.style = newStyle;
+                    }
+                });
+            });
         } else {
+            // Update active style for new shapes
             this.activeStyle$.next({
                 ...this.activeStyle$.value,
                 ...patch,
@@ -74,8 +87,8 @@ export class CanvasStore {
         }
     }
 
-    /* ——— группировка ——— */
-    groupSelected() {
+    /* ────────── Shape Operations ────────── */
+    groupSelected(): void {
         const ids = [...this.selectedIds$.value];
         if (ids.length < 2) return;
 
@@ -83,73 +96,57 @@ export class CanvasStore {
             const children = arr.filter((s) => ids.includes(s.id));
             const others = arr.filter((s) => !ids.includes(s.id));
             const group: Shape = {
-                id: Date.now(), // простая «уникальность»
+                id: Date.now(),
                 type: 'group',
                 children,
-                style: { fill: '#d9d9d9' },
+                style: { ...this.activeStyle$.value }
             };
             this.selectedIds$.next(new Set([group.id]));
             arr.splice(0, arr.length, ...others, group);
         });
     }
 
-    ungroupSelected() {
+    ungroupSelected(): void {
         this.updateShapes((arr) => {
             const newArr: Shape[] = [];
             arr.forEach((s) => {
-                if (s.type === 'group' && this.selectedIds$.value.has(s.id))
+                if (s.type === 'group' && this.selectedIds$.value.has(s.id)) {
                     newArr.push(...s.children);
-                else newArr.push(s);
+                } else {
+                    newArr.push(s);
+                }
             });
             this.selectedIds$.next(new Set());
             arr.splice(0, arr.length, ...newArr);
         });
     }
 
-    /* ——— merge только для контуров (pen/line) ——— */
-    mergeSelected() {
+    /* ────────── Path Operations ────────── */
+    mergePaths(): void {
         const ids = [...this.selectedIds$.value];
-        let mergedPts: { x: number; y: number }[] = [];
+        if (ids.length < 2) return;
+
         this.updateShapes((arr) => {
-            const rest: Shape[] = [];
-            arr.forEach((s) => {
-                if (ids.includes(s.id) && (s.type === 'pen' || s.type === 'line')) {
-                    if (s.type === 'pen') mergedPts.push(...s.points);
-                    else mergedPts.push({ x: s.x1, y: s.y1 }, { x: s.x2, y: s.y2 });
-                } else rest.push(s);
-            });
-            if (mergedPts.length) {
-                rest.push({
+            const pathShapes = arr.filter(s => ids.includes(s.id) && s.type === 'path');
+            const others = arr.filter(s => !ids.includes(s.id));
+
+            if (pathShapes.length >= 2) {
+                // Merge all selected paths into one
+                const mergedPath: Shape = {
                     id: Date.now(),
-                    type: 'pen',
-                    points: mergedPts,
-                    style: { stroke: '#2c3e50', lineWidth: 2 },
-                } as Shape);
-                this.selectedIds$.next(new Set());
-                arr.splice(0, arr.length, ...rest);
+                    type: 'path',
+                    segments: pathShapes.flatMap(p => p.type === 'path' ? p.segments : []),
+                    closed: false,
+                    style: { ...this.activeStyle$.value }
+                };
+                this.selectedIds$.next(new Set([mergedPath.id]));
+                arr.splice(0, arr.length, ...others, mergedPath);
             }
         });
     }
 
-    /* ——— порядок слоёв ——— */
-    // bringToFront() {
-    //   const ids = this.selectedIds$.value;
-    //   this.updateShapes((arr) => {
-    //     const picked = arr.filter((s) => ids.has(s.id));
-    //     const others = arr.filter((s) => !ids.has(s.id));
-    //     arr.splice(0, arr.length, ...others, ...picked);
-    //   });
-    // }
-    // sendToBack() {
-    //   const ids = this.selectedIds$.value;
-    //   this.updateShapes((arr) => {
-    //     const picked = arr.filter((s) => ids.has(s.id));
-    //     const others = arr.filter((s) => !ids.has(s.id));
-    //     arr.splice(0, arr.length, ...picked, ...others);
-    //   });
-    // }
-
-    bringToFront() {
+    /* ────────── Layer Operations ────────── */
+    bringToFront(): void {
         const ids = this.selectedIds$.value;
         this.updateShapes(arr => {
             for (let i = arr.length - 2; i >= 0; i--) {
@@ -160,7 +157,7 @@ export class CanvasStore {
         });
     }
 
-    sendToBack() {
+    sendToBack(): void {
         const ids = this.selectedIds$.value;
         this.updateShapes(arr => {
             for (let i = 1; i < arr.length; i++) {
