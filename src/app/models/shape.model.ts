@@ -39,6 +39,7 @@ export interface ShapeStyle {
     shadowBlur?: number;
     shadowOffset?: Point2D;
     shadowColor?: string;
+    shadowOpacity?: number;
 }
 
 export interface BaseShape {

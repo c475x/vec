@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 import { Tool } from '../../models/tool.enum';
 import { CanvasStore } from '../../services/canvas.store';
 import { ExportService } from '../../services/export.service';
-import { ImageShape, PathShape, GroupShape, ShapeStyle } from '../../models/shape.model';
+import { ImageShape, PathShape, GroupShape, ShapeStyle, Gradient } from '../../models/shape.model';
 import paper from 'paper';
 
 @Component({
@@ -51,9 +51,13 @@ export class ToolbarComponent {
         // Handle SVG import separately
         if (file.type === 'image/svg+xml') {
             const reader = new FileReader();
-            reader.onload = () => {
-                const svgText = reader.result as string;
-                this.importSVGText(svgText);
+            reader.onload = async () => {
+                try {
+                    const svgText = reader.result as string;
+                    await this.importSVGText(svgText);
+                } catch (e) {
+                    console.error('SVG import failed', e);
+                }
             };
             reader.readAsText(file);
             return;
@@ -142,5 +146,37 @@ export class ToolbarComponent {
             this.store.updateShapes(arr => arr.push(group));
             this.store.select(group.id);
         }
+    }
+
+    // Helper to convert a Paper.Path into our PathShape with optional name
+    private pathToShape(path: paper.Path, name: string|undefined, activeDefault: ShapeStyle): PathShape {
+        const segments = path.segments.map(seg => ({
+            point: { x: seg.point.x, y: seg.point.y },
+            handleIn: seg.handleIn && { x: seg.handleIn.x, y: seg.handleIn.y },
+            handleOut: seg.handleOut && { x: seg.handleOut.x, y: seg.handleOut.y }
+        }));
+        const style: ShapeStyle = { ...activeDefault };
+        // Import solid fill if valid
+        try {
+            if (path.fillColor && !((path.fillColor as any).gradient)) {
+                const css = path.fillColor.toCSS(true)!;
+                if (!css.includes('NaN')) {
+                    style.fill = css;
+                    style.fillEnabled = true;
+                }
+            }
+        } catch {}
+        // Import stroke
+        try {
+            if (path.strokeColor) {
+                const sc = path.strokeColor.toCSS(true)!;
+                if (!sc.includes('NaN')) {
+                    style.stroke = sc;
+                    style.strokeEnabled = true;
+                    style.strokeWidth = path.strokeWidth;
+                }
+            }
+        } catch {}
+        return { id: Date.now(), name, type: 'path', segments, closed: path.closed, style } as PathShape;
     }
 }

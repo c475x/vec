@@ -1,4 +1,4 @@
-import { AfterViewInit, Component, ElementRef, HostListener, Input, Output, ViewChild, OnDestroy, EventEmitter } from '@angular/core';
+import { AfterViewInit, Component, ElementRef, HostListener, Input, Output, ViewChild, OnDestroy, EventEmitter, OnChanges, SimpleChanges } from '@angular/core';
 import { Subscription } from 'rxjs';
 import paper from 'paper';
 import { Tool } from '../../models/tool.enum';
@@ -17,7 +17,7 @@ interface PaperItemWithId extends paper.Item {
     templateUrl: './canvas.component.html',
     styleUrls: ['./canvas.component.scss'],
 })
-export class CanvasComponent implements AfterViewInit, OnDestroy {
+export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
     @Input() tool: Tool = Tool.Move;
     @Output() toolChange = new EventEmitter<Tool>();
 
@@ -88,12 +88,13 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
     private initialShapeCopy: Shape | null = null;
     private resizeOrigin: paper.Point | null = null;
     private initialPaperItem: paper.Path | null = null; // for path resizing
+    private initialPaperGroup: paper.Group | null = null; // for group resizing
 
     // Bounding box style configuration
     private readonly boundingBoxConfig = {
         padding: 0,
         strokeColor: '#0c8ce9',
-        strokeWidth: 1,
+        strokeWidth: 2,
         handleSize: 8,
         handleFillColor: 'white',
         handleStrokeColor: '#0c8ce9',
@@ -115,12 +116,16 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
     private previewClones: PaperItemWithId[] = []; // for live move preview
 
     private hasDragged: boolean = false;
+    // State for multi-select and group resizing
+    private resizingMultiple: boolean = false;
+    private initialShapesCopy: Map<number, Shape> = new Map();
+    // Map of shapeId to cloned Paper.js item (path or group) for multi-resize
+    private initialPaperItemsMap: Map<number, paper.Item> = new Map();
 
     constructor(private store: CanvasStore, private renderer: ShapeRendererService, private selectionRenderer: SelectionRendererService) {}
 
     ngAfterViewInit(): void {
-        console.log('Initializing Paper.js canvas');
-        // Setup Paper.js
+        // Setup canvas
         const canvas = this.canvasRef.nativeElement;
         paper.setup(canvas);
         this.project = paper.project;
@@ -130,10 +135,6 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
             canvas.offsetWidth,
             canvas.offsetHeight
         );
-        console.log('Canvas size set:', { 
-            width: canvas.offsetWidth, 
-            height: canvas.offsetHeight 
-        });
 
         // Initialize moveOffset after Paper.js is set up
         this.moveOffset = new paper.Point(0, 0);
@@ -142,7 +143,6 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
         this.mainLayer = new paper.Layer();
         this.mainLayer.name = 'mainLayer';
         this.mainLayer.activate();
-        console.log('Main layer created and activated');
 
         this.guideLayer = new paper.Layer();
         this.guideLayer.name = 'guideLayer';
@@ -163,6 +163,15 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
     ngOnDestroy(): void {
         this.subscriptions.forEach(sub => sub.unsubscribe());
         this.project.remove();
+    }
+
+    ngOnChanges(changes: SimpleChanges): void {
+        if (changes['tool'] && changes['tool'].currentValue !== Tool.Move) {
+            this.store.clearSelection();
+            this.selectedItems.clear();
+            this.hoveredItem = null;
+            this.updateCanvas();
+        }
     }
 
     private setupPaperTool(): void {
@@ -189,13 +198,13 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
     }
 
     private handleMouseDown(event: paper.ToolEvent): void {
-        console.log('handleMouseDown at', event.point);
+        // console.log('handleMouseDown at', event.point);
         this.hasDragged = false;
         const point = event.point;
         this.dragStartPoint = point;
         this.lastMousePoint = point;
 
-        console.log('selectionLayer items data handles:', this.selectionLayer.children.map(ch => ch.data));
+        // console.log('selectionLayer items data handles:', this.selectionLayer.children.map(ch => ch.data));
         // Check for click on a resize handle path in selectionLayer
         const handleHit = this.project.hitTest(point, {
             fill: true,
@@ -205,30 +214,69 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
         });
         if (handleHit?.item) {
             const handleName = (handleHit.item.data as any).handle as 'nw' | 'ne' | 'se' | 'sw';
-            console.log('Clicked on handle item', handleName);
             this.activeHandle = handleName;
-            this.resizingItem = Array.from(this.selectedItems)[0];
-            // Capture initial bounds and shape copy for resize
-            this.initialBounds = this.resizingItem.bounds.clone();
-            const id = this.resizingItem.shapeId;
-            if (id != null) {
-                const shape = this.store.shapes$.value.find(s => s.id === id);
-                this.initialShapeCopy = shape ? JSON.parse(JSON.stringify(shape)) as Shape : null;
-            }
             this.resizeOrigin = point;
-            // Capture a clone of the Paper.js item for path resizing
-            if (this.resizingItem instanceof paper.Path) {
-                this.initialPaperItem = (this.resizingItem.clone({ insert: false }) as paper.Path);
+            const items = Array.from(this.selectedItems);
+            if (items.length > 1) {
+                // Multi-select resizing
+                this.resizingMultiple = true;
+                // Compute union bounds
+                let unionBounds = items[0].bounds.clone();
+                for (let i = 1; i < items.length; i++) unionBounds = unionBounds.unite(items[i].bounds);
+                this.initialBounds = unionBounds.clone();
+                // Snapshot each selected shape model and initial Path for paths
+                this.initialShapesCopy.clear();
+                this.initialPaperItemsMap.clear();
+                items.forEach(item => {
+                    const id = item.shapeId;
+                    if (id != null) {
+                        const shapeModel = this.store.shapes$.value.find(s => s.id === id);
+                        if (shapeModel) {
+                            this.initialShapesCopy.set(id, JSON.parse(JSON.stringify(shapeModel)) as Shape);
+                            // Snapshot each Paper.js item for multi-resize
+                            if (item instanceof paper.Path) {
+                                this.initialPaperItemsMap.set(id, item.clone({ insert: false }));
+                            } else if (item instanceof paper.Group) {
+                                this.initialPaperItemsMap.set(id, item.clone({ insert: false }));
+                            }
+                        }
+                    }
+                });
+            } else {
+                // Single shape or group resizing
+                this.resizingMultiple = false;
+                this.resizingItem = items[0];
+                this.initialBounds = this.resizingItem.bounds.clone();
+                const id = this.resizingItem.shapeId;
+                if (id != null) {
+                    const shapeModel = this.store.shapes$.value.find(s => s.id === id);
+                    this.initialShapeCopy = shapeModel ? JSON.parse(JSON.stringify(shapeModel)) as Shape : null;
+                }
+                if (this.resizingItem instanceof paper.Path) {
+                    this.initialPaperItem = this.resizingItem.clone({ insert: false }) as paper.Path;
+                } else if (this.resizingItem instanceof paper.Group) {
+                    this.initialPaperGroup = this.resizingItem.clone({ insert: false }) as paper.Group;
+                }
             }
             this.updateCanvas();
             return;
         }
 
         if (this.tool === Tool.Move) {
+            // Allow multi-select drag: compute union bounds for detection, but use same multi-clone logic
+            let expandedUnion: paper.Rectangle | null = null;
+            if (this.selectedItems.size > 1) {
+                const items = Array.from(this.selectedItems);
+                let unionBounds = items[0].bounds.clone();
+                for (let i = 1; i < items.length; i++) {
+                    unionBounds = unionBounds.unite(items[i].bounds);
+                }
+                expandedUnion = unionBounds.expand(this.boundingBoxConfig.padding);
+            }
             let hitSelectedItem = false;
-            // Check if clicked within selected item's bounding box for move
+            // Check if clicked within any selected item's bounds or within union bounds
             for (const selItem of this.selectedItems) {
-                const expandedBounds = selItem.bounds.expand(this.boundingBoxConfig.padding);
+                const expandedBounds = expandedUnion || selItem.bounds.expand(this.boundingBoxConfig.padding);
                 if (expandedBounds.contains(point)) {
                     this.movingItem = selItem;
                     this.moveOffset = point.subtract(selItem.position);
@@ -240,20 +288,25 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
                             this.initialPositions.set(it.shapeId, it.position.clone());
                         }
                     });
-                    // Create live-preview clones and hide originals, preserving z-order
-                    const originals = Array.from(this.selectedItems);
-                    const originalIndices = originals.map(item => this.mainLayer.children.indexOf(item));
+                    // Unified live-preview clones logic (same as for unselected start)
+                    // Snapshot original indices before any store updates
+                    const originalsUnified = Array.from(this.selectedItems);
+                    const originalsUnifiedWithIndices = originalsUnified.map(item => ({
+                        item,
+                        index: this.mainLayer.children.indexOf(item)
+                    })).sort((a, b) => b.index - a.index);
+                    // Create live-preview clones and hide originals, preserving exact z-order
                     this.previewClones = [];
-                    originals.forEach((item, idx) => {
+                    originalsUnifiedWithIndices.forEach(({ item, index }) => {
                         const shape = this.store.shapes$.value.find(s => s.id === item.shapeId);
                         if (!shape) return;
                         const clone = this.renderer.createPaperItem(shape) as PaperItemWithId;
                         clone.shapeId = shape.id;
-                        // Insert clone at original index to preserve stacking
-                        this.mainLayer.insertChild(originalIndices[idx], clone);
+                        this.mainLayer.insertChild(index, clone);
                         this.previewClones.push(clone);
                     });
-                    // Replace selectedItems with clones and update movingItem to clone
+                    console.log('unified clone z-order (pre-select):', this.previewClones.map(c => c.index));
+                    // Replace selectedItems with clones and update movingItem reference
                     const origMovingId = this.movingItem?.shapeId;
                     this.selectedItems.clear();
                     this.previewClones.forEach(clone => this.selectedItems.add(clone));
@@ -261,8 +314,19 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
                         this.movingItem = this.previewClones.find(c => c.shapeId === origMovingId) || null;
                     }
                     this.selectionLayer.removeChildren();
+                    // Render preview clones
                     this.project.view.update();
-                    break;
+                    // Update store selection for single-select
+                    if (origMovingId != null && this.selectedItems.size <= 1) {
+                        if (event.modifiers.shift) {
+                            this.store.toggle(origMovingId);
+                        } else {
+                            this.store.select(origMovingId);
+                        }
+                    }
+                    // Final render (still in preview mode)
+                    this.updateCanvas();
+                    return;
                 }
             }
 
@@ -297,19 +361,22 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
                                 this.initialPositions.set(it.shapeId, it.position.clone());
                             }
                         });
-                        // Create live-preview clones and hide originals, preserving z-order
+                        // Create live-preview clones and hide originals, preserving exact z-order
                         const originals2 = Array.from(this.selectedItems);
-                        const originalIndices2 = originals2.map(item => this.mainLayer.children.indexOf(item));
+                        const originals2WithIndices = originals2.map(item => ({
+                            item,
+                            index: this.mainLayer.children.indexOf(item)
+                        })).sort((a, b) => b.index - a.index);
                         this.previewClones = [];
-                        originals2.forEach((item, idx) => {
+                        originals2WithIndices.forEach(({ item, index }) => {
                             const shape = this.store.shapes$.value.find(s => s.id === item.shapeId);
                             if (!shape) return;
                             const clone = this.renderer.createPaperItem(shape) as PaperItemWithId;
                             clone.shapeId = shape.id;
-                            // Insert clone at original index to preserve stacking
-                            this.mainLayer.insertChild(originalIndices2[idx], clone);
+                            this.mainLayer.insertChild(index, clone);
                             this.previewClones.push(clone);
                         });
+                        console.log('was item already selected: false/ z-order:', this.previewClones.map(c => c.index));
                         // Replace selectedItems with clones and update movingItem to clone
                         const origMovingId2 = this.movingItem?.shapeId;
                         this.selectedItems.clear();
@@ -327,101 +394,7 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
                         }
                         this.updateCanvas();
                     } else {
-                        // Fallback: bounding box click detection
-                        let boxHit: PaperItemWithId | null = null;
-                        for (let i = this.mainLayer.children.length - 1; i >= 0; i--) {
-                            const child = this.mainLayer.children[i] as PaperItemWithId;
-                            if (child.bounds.contains(point)) {
-                                boxHit = child;
-                                break;
-                            }
-                        }
-                        if (boxHit?.shapeId) {
-                            // Select via box hit
-                            if (!event.modifiers.shift) this.selectedItems.clear();
-                            this.selectedItems.add(boxHit);
-                            this.movingItem = boxHit;
-                            this.moveOffset = point.subtract(boxHit.position);
-                            this.initialPositions.clear();
-                            this.selectedItems.forEach(it => it.shapeId != null && this.initialPositions.set(it.shapeId, it.position.clone()));
-                            // Create live-preview clones and hide originals, preserving z-order
-                            const originals3 = Array.from(this.selectedItems);
-                            const originalIndices3 = originals3.map(item => this.mainLayer.children.indexOf(item));
-                            this.previewClones = [];
-                            originals3.forEach((item, idx) => {
-                                const shape = this.store.shapes$.value.find(s => s.id === item.shapeId);
-                                if (!shape) return;
-                                const clone = this.renderer.createPaperItem(shape) as PaperItemWithId;
-                                clone.shapeId = shape.id;
-                                // Insert clone at original index to preserve stacking
-                                this.mainLayer.insertChild(originalIndices3[idx], clone);
-                                this.previewClones.push(clone);
-                            });
-                            // Replace selectedItems with clones and update movingItem to clone
-                            const origMovingId3 = this.movingItem?.shapeId;
-                            this.selectedItems.clear();
-                            this.previewClones.forEach(clone => this.selectedItems.add(clone));
-                            if (origMovingId3 != null) {
-                                this.movingItem = this.previewClones.find(c => c.shapeId === origMovingId3) || null;
-                            }
-                            this.selectionLayer.removeChildren();
-                            this.project.view.update();
-                            if (event.modifiers.shift) this.store.toggle(boxHit.shapeId);
-                            else this.store.select(boxHit.shapeId);
-                            this.updateCanvas();
-                        } else {
-                            // Clicked on empty space - start marquee selection
-                            this.selectedItems.clear();
-                            this.store.clearSelection();
-                            this.marqueeActive = true;
-                            this.marqueeStart = point;
-                            this.marqueeEnd = point;
-                            this.updateCanvas();
-                        }
-                    }
-                } else {
-                    // Fallback if no hitResult: bounding box click
-                    let boxHit: PaperItemWithId | null = null;
-                    for (let i = this.mainLayer.children.length - 1; i >= 0; i--) {
-                        const child = this.mainLayer.children[i] as PaperItemWithId;
-                        if (child.bounds.contains(point)) {
-                            boxHit = child;
-                            break;
-                        }
-                    }
-                    if (boxHit?.shapeId) {
-                        if (!event.modifiers.shift) this.selectedItems.clear();
-                        this.selectedItems.add(boxHit);
-                        this.movingItem = boxHit;
-                        this.moveOffset = point.subtract(boxHit.position);
-                        this.initialPositions.clear();
-                        this.selectedItems.forEach(it => it.shapeId != null && this.initialPositions.set(it.shapeId, it.position.clone()));
-                        // Create live-preview clones and hide originals, preserving z-order
-                        const originals4 = Array.from(this.selectedItems);
-                        const originalIndices4 = originals4.map(item => this.mainLayer.children.indexOf(item));
-                        this.previewClones = [];
-                        originals4.forEach((item, idx) => {
-                            const shape = this.store.shapes$.value.find(s => s.id === item.shapeId);
-                            if (!shape) return;
-                            const clone = this.renderer.createPaperItem(shape) as PaperItemWithId;
-                            clone.shapeId = shape.id;
-                            // Insert clone at original index to preserve stacking
-                            this.mainLayer.insertChild(originalIndices4[idx], clone);
-                            this.previewClones.push(clone);
-                        });
-                        // Replace selectedItems with clones and update movingItem to clone
-                        const origMovingId4 = this.movingItem?.shapeId;
-                        this.selectedItems.clear();
-                        this.previewClones.forEach(clone => this.selectedItems.add(clone));
-                        if (origMovingId4 != null) {
-                            this.movingItem = this.previewClones.find(c => c.shapeId === origMovingId4) || null;
-                        }
-                        this.selectionLayer.removeChildren();
-                        this.project.view.update();
-                        if (event.modifiers.shift) this.store.toggle(boxHit.shapeId);
-                        else this.store.select(boxHit.shapeId);
-                        this.updateCanvas();
-                    } else {
+                        // Clicked on empty space - start marquee selection
                         this.selectedItems.clear();
                         this.store.clearSelection();
                         this.marqueeActive = true;
@@ -429,6 +402,14 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
                         this.marqueeEnd = point;
                         this.updateCanvas();
                     }
+                } else {
+                    // Clicked on empty space - start marquee selection
+                    this.selectedItems.clear();
+                    this.store.clearSelection();
+                    this.marqueeActive = true;
+                    this.marqueeStart = point;
+                    this.marqueeEnd = point;
+                    this.updateCanvas();
                 }
             } else {
                 // Preview existing selection move
@@ -526,14 +507,15 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
     private handleMouseDrag(event: paper.ToolEvent): void {
         const point = event.point;
         const delta = event.delta;
-        console.log('handleMouseDrag called, activeHandle:', this.activeHandle, 'movingItem:', this.movingItem?.shapeId, 'resizingItem:', this.resizingItem?.shapeId, 'delta:', delta, 'point:', point);
         if (this.movingItem) this.hasDragged = true;
 
         // Resize: update store shapes based on initial copy and origin
-        if (this.resizingItem && this.activeHandle && this.initialBounds && this.initialShapeCopy && this.resizeOrigin) {
-            console.log('Resizing in progress', this.activeHandle);
-            this.updateResizedShape(point);
-            // Re-render all shapes
+        if ((this.resizingItem || this.resizingMultiple) && this.activeHandle && this.initialBounds && this.resizeOrigin) {
+            if (this.resizingMultiple) {
+                this.updateResizedShapesMultiple(point);
+            } else {
+                this.updateResizedShape(point);
+            }
             this.updateCanvas();
             return;
         }
@@ -564,7 +546,7 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
                 case Tool.Pen:
                     this.currentPath.add(point);
                     this.currentPath.selected = false;
-                    this.updateCanvas(); // Превью pen tool
+                    this.updateCanvas();
                     break;
 
                 case Tool.Rect:
@@ -577,7 +559,6 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
                         Math.max(this.dragStartPoint!.x, point.x),
                         Math.max(this.dragStartPoint!.y, point.y)
                     );
-                    // Минимальный размер 1x1
                     const minW = Math.max(1, bottomRight.x - topLeft.x);
                     const minH = Math.max(1, bottomRight.y - topLeft.y);
                     const rect = new paper.Rectangle(topLeft, new paper.Size(minW, minH));
@@ -652,13 +633,14 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
     }
 
     private handleMouseUp(event: paper.ToolEvent): void {
+        console.log('[canvas] handleMouseUp start, tool:', this.tool, 'selectedIds:', Array.from(this.store.selectedIds$.value));
         if (this.marqueeActive && this.marqueeStart && this.marqueeEnd) {
             const x1 = Math.min(this.marqueeStart.x, this.marqueeEnd.x);
             const y1 = Math.min(this.marqueeStart.y, this.marqueeEnd.y);
             const x2 = Math.max(this.marqueeStart.x, this.marqueeEnd.x);
             const y2 = Math.max(this.marqueeStart.y, this.marqueeEnd.y);
             if (x2 - x1 > 2 || y2 - y1 > 2) {
-                // Выделяем все объекты, чьи bounds пересекаются с рамкой
+                // Select all objects intersecting the marquee
                 const selectedIds = new Set<number>();
                 for (const item of this.mainLayer.children) {
                     const bounds = item.bounds;
@@ -718,8 +700,8 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
             this.currentPath = null;
         }
 
-        // If click (no drag) on selected clone, switch selection to that single object
-        if (this.movingItem && !this.hasDragged) {
+        // If click (no drag) on selected clone, switch selection only if single-select (ignore for multi-select)
+        if (this.movingItem && !this.hasDragged && this.store.selectedIds$.value.size <= 1) {
             const id = this.movingItem.shapeId;
             if (id != null) {
                 this.store.select(id);
@@ -727,6 +709,7 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
         }
         // Commit moving changes to the store before clearing state
         if (this.movingItem) {
+            console.log('[canvas] commit move start');
             this.store.updateShapes(shapes => {
                 this.selectedItems.forEach(item => {
                     const id = item.shapeId;
@@ -776,6 +759,7 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
                     }
                 });
             });
+            console.log('[canvas] commit move end, models:', this.store.shapes$.value.filter(s => this.store.selectedIds$.value.has(s.id)));
         }
 
         // Clean up preview clones
@@ -805,6 +789,9 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
         this.initialShapeCopy = null;
         this.resizeOrigin = null;
         this.initialPaperItem = null;
+        this.initialPaperGroup = null;
+        // Reset multi-resize flag so hover reappears
+        this.resizingMultiple = false;
     }
 
     private moveSelectedItems(delta: paper.Point): void {
@@ -936,9 +923,9 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
             this.selectionRenderer.renderMarquee(this.guideLayer, this.marqueeStart, this.marqueeEnd);
         }
 
-        // Render hover outline only when Move tool active (skip during move)
-        if (this.tool === Tool.Move && !this.movingItem) {
-            this.selectionRenderer.renderHover(this.selectionLayer, this.hoveredItem, this.boundingBoxConfig as BoundingBoxConfig);
+        // Render hover outline only when Move tool active, not moving/resizing, single selection
+        if (this.tool === Tool.Move && !this.movingItem && !this.resizingItem && !this.resizingMultiple && this.selectedItems.size <= 1) {
+            this.selectionRenderer.renderHover(this.guideLayer, this.hoveredItem, this.boundingBoxConfig as BoundingBoxConfig);
         }
 
         // --- Preview for currentPath (pen, rect, ellipse) ---
@@ -961,11 +948,8 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
             fillEnabled: !!path.fillColor
         };
 
-        console.log('Converting path to shape with style:', style);
-
         // Check the current tool to determine shape type
         if (this.tool === Tool.Rect || path.data?.type === 'rectangle') {
-            console.log('Converting Rectangle');
             const shape = {
                 id,
                 type: 'rectangle',
@@ -973,10 +957,8 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
                 size: { width: path.bounds.width, height: path.bounds.height },
                 style
             } as RectangleShape;
-            console.log('Created rectangle shape:', shape);
             return shape;
         } else if (this.tool === Tool.Ellipse || path.data?.type === 'ellipse') {
-            console.log('Converting Ellipse');
             const shape = {
                 id,
                 type: 'ellipse',
@@ -984,12 +966,10 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
                 radius: { width: path.bounds.width / 2, height: path.bounds.height / 2 },
                 style
             } as EllipseShape;
-            console.log('Created ellipse shape:', shape);
             return shape;
         }
 
         // Default to path
-        console.log('Converting Path');
         const shape = {
             id,
             type: 'path',
@@ -1001,7 +981,6 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
             closed: path.closed,
             style
         } as PathShape;
-        console.log('Created path shape:', shape);
         return shape;
     }
 
@@ -1012,8 +991,19 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
         if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) {
             return;
         }
+
+        // Clear selection on Escape key
+        if (event.key === 'Escape' && !event.repeat) {
+            this.store.clearSelection();
+            this.selectedItems.clear();
+            this.hoveredItem = null;
+            this.updateCanvas();
+            event.preventDefault();
+            return;
+        }
+
         if ((event.key === 'Delete' || event.key === 'Backspace') && !event.repeat) {
-            // Удаляем выделенные объекты
+            // Remove all selected shapes in place
             const selectedIds = Array.from(this.store.selectedIds$.value);
             if (selectedIds.length > 0) {
                 this.store.updateShapes(shapes => {
@@ -1092,7 +1082,7 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
     private subscribeToStore(): void {
         this.subscriptions.push(
             this.store.shapes$.subscribe(() => {
-                console.log('Shapes updated in store, updating canvas');
+                // console.log('Shapes updated in store, updating canvas');
                 this.updateCanvas();
 
                 // Re-sync selectedItems with store after shapes update
@@ -1125,11 +1115,11 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
                 this.updateSelection();
             }),
             this.store.hideComments$.subscribe(() => {
-                console.log('Comment visibility updated');
+                // console.log('Comment visibility updated');
                 this.updateCanvas();
             }),
             this.store.activeStyle$.subscribe(() => {
-                console.log('Active style changed, updating canvas');
+                // console.log('Active style changed, updating canvas');
                 this.updateCanvas();
             })
         );
@@ -1183,32 +1173,111 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
                     break;
                 }
                 case 'path': {
-                    // Use initialPaperItem clone for correct path pivot
+                    // Resize path: update model segments based on initial clone
                     const pathOrig = this.initialPaperItem!;
-                    const pathS = s.paperObject as paper.Path;
-                
                     // Determine pivot corner (opposite handle)
                     const pivot = new paper.Point(
                         signX > 0 ? oB.left : oB.right,
                         signY > 0 ? oB.top : oB.bottom
                     );
-                
                     // Scale the cloned path
                     const scaledPath = pathOrig.clone();
                     scaledPath.scale(kx, ky, pivot);
-                
-                    // Assign proper Segment instances to match type
-                    pathS.segments = scaledPath.segments.map(seg => new paper.Segment(
+                    // Update model segments with new paper.Segment instances
+                    (s as PathShape).segments = scaledPath.segments.map(seg => new paper.Segment(
                         seg.point.clone(),
                         seg.handleIn ? seg.handleIn.clone() : undefined,
                         seg.handleOut ? seg.handleOut.clone() : undefined
                     ));
-                    pathS.closed = scaledPath.closed;
-                
+                    (s as PathShape).closed = scaledPath.closed;
                     // Cleanup temporary path
                     scaledPath.remove();
                     break;
                 }
+                case 'group': {
+                    // Resize group by scaling the cloned group and recursively updating nested children
+                    const pivot = new paper.Point(
+                        signX > 0 ? oB.left : oB.right,
+                        signY > 0 ? oB.top : oB.bottom
+                    );
+                    const groupClone = this.initialPaperGroup!.clone({ insert: false }) as paper.Group;
+                    groupClone.scale(kx, ky, pivot);
+                    this.commitResizedGroup(groupClone, s as GroupShape);
+                    groupClone.remove();
+                    break;
+                }
+            }
+        });
+    }
+
+    private updateResizedShapesMultiple(p: paper.Point): void {
+        const oBs = this.initialBounds!;
+        const dx = p.x - this.resizeOrigin!.x;
+        const dy = p.y - this.resizeOrigin!.y;
+        const signX = (this.activeHandle === 'ne' || this.activeHandle === 'se') ? 1 : -1;
+        const signY = (this.activeHandle === 'se' || this.activeHandle === 'sw') ? 1 : -1;
+        // Compute overall scale
+        const newW = Math.max(10, oBs.width + dx * signX);
+        const newH = Math.max(10, oBs.height + dy * signY);
+        const kx = newW / oBs.width;
+        const ky = newH / oBs.height;
+        const pivot = new paper.Point(
+            signX > 0 ? oBs.left : oBs.right,
+            signY > 0 ? oBs.top : oBs.bottom
+        );
+        this.store.updateShapes(shapes => {
+            // For each cloned initial Paper item, scale and commit back to model
+            this.initialPaperItemsMap.forEach((origClone, id) => {
+                const s = shapes.find(sh => sh.id === id);
+                if (!s) return;
+                // Clone the original item and scale
+                const scaled = origClone.clone({ insert: false });
+                scaled.scale(kx, ky, pivot);
+                // Commit based on shape type
+                if (s.type === 'rectangle') {
+                    s.topLeft = scaled.bounds.topLeft;
+                    s.size = scaled.bounds.size;
+                } else if (s.type === 'ellipse') {
+                    s.center = scaled.bounds.center;
+                    s.radius = new paper.Size(scaled.bounds.width / 2, scaled.bounds.height / 2);
+                } else if (s.type === 'image') {
+                    s.position = scaled.bounds.center;
+                    s.size = scaled.bounds.size;
+                } else if (s.type === 'path') {
+                    // Scale path: update model segments and closed state
+                    const scaledPath = scaled as paper.Path;
+                    (s as PathShape).segments = scaledPath.segments;
+                    (s as PathShape).closed = scaledPath.closed;
+                } else if (s.type === 'group') {
+                    // Scale group by recursively updating nested children
+                    this.commitResizedGroup(scaled as paper.Group, s as GroupShape);
+                }
+                // Remove temporary scaled clone
+                scaled.remove();
+            });
+        });
+    }
+
+    // Helper to recursively commit resizing for nested groups
+    private commitResizedGroup(groupClone: paper.Group, groupModel: GroupShape): void {
+        groupClone.children.forEach((childClone, idx) => {
+            const childModel = groupModel.children[idx];
+            if (!childModel) return;
+            if (childModel.type === 'group') {
+                this.commitResizedGroup(childClone as paper.Group, childModel as GroupShape);
+            } else if (childModel.type === 'rectangle') {
+                (childModel as RectangleShape).topLeft = childClone.bounds.topLeft;
+                (childModel as RectangleShape).size = childClone.bounds.size;
+            } else if (childModel.type === 'ellipse') {
+                (childModel as EllipseShape).center = childClone.bounds.center;
+                (childModel as EllipseShape).radius = new paper.Size(childClone.bounds.width / 2, childClone.bounds.height / 2);
+            } else if (childModel.type === 'image') {
+                (childModel as ImageShape).position = childClone.bounds.center;
+                (childModel as ImageShape).size = childClone.bounds.size;
+            } else if (childModel.type === 'path') {
+                const pathClone = childClone as paper.Path;
+                (childModel as PathShape).segments = pathClone.segments;
+                (childModel as PathShape).closed = pathClone.closed;
             }
         });
     }

@@ -26,7 +26,7 @@ export class SelectionRendererService {
 
     renderSelection(selectionLayer: paper.Layer, selectedItems: Set<PaperItemWithId>, config: BoundingBoxConfig): void {
         selectionLayer.removeChildren();
-        // If multiple items selected, draw one common bounding box (no handles) with dimensions
+        // If multiple items selected, draw one common bounding box with handles and dimensions
         if (selectedItems.size > 1) {
             const items = Array.from(selectedItems);
             // Compute union of bounds
@@ -47,7 +47,31 @@ export class SelectionRendererService {
                 guide: false
             });
             selectionLayer.addChild(outline);
-            // Draw dimensions for group
+            // Draw resize handles
+            const half = config.handleSize / 2;
+            const handlePositions = [
+                { point: expanded.topLeft, name: 'nw' },
+                { point: expanded.topRight, name: 'ne' },
+                { point: expanded.bottomRight, name: 'se' },
+                { point: expanded.bottomLeft, name: 'sw' }
+            ];
+            handlePositions.forEach(h => {
+                const rect = new paper.Path.Rectangle({
+                    rectangle: new paper.Rectangle(
+                        Math.round(h.point.x - half),
+                        Math.round(h.point.y - half),
+                        config.handleSize,
+                        config.handleSize
+                    ),
+                    fillColor: new paper.Color(config.handleFillColor),
+                    strokeColor: new paper.Color(config.handleStrokeColor),
+                    strokeWidth: config.handleStrokeWidth,
+                    opacity: 1,
+                    data: { handle: h.name }
+                });
+                selectionLayer.addChild(rect);
+            });
+            // Draw dimensions for group/multi-select
             this.drawDimensions(selectionLayer, unionBounds, config);
             return;
         }
@@ -80,6 +104,8 @@ export class SelectionRendererService {
             outline.shadowBlur = 0;
             outline.shadowOffset = new paper.Point(0, 0);
             guideLayer.addChild(outline);
+            // Expose shapeId on hover outline for hit-testing
+            (outline as any).shapeId = (hoveredItem as any).shapeId;
         }
     }
 

@@ -88,6 +88,9 @@ export class ShapeRendererService {
         if (shape.style.shadowOffset) {
             raster.shadowOffset = new paper.Point(shape.style.shadowOffset.x, shape.style.shadowOffset.y);
         }
+        if (shape.style.shadowOpacity !== undefined && raster.shadowColor) {
+            raster.shadowColor.alpha = shape.style.shadowOpacity;
+        }
         // Create group for clipping and borders
         const group = new paper.Group();
         // Add raster
@@ -182,6 +185,9 @@ export class ShapeRendererService {
         }
         if (style.shadowOffset) {
             item.shadowOffset = new paper.Point(style.shadowOffset.x, style.shadowOffset.y);
+        }
+        if (style.shadowOpacity !== undefined && item.shadowColor) {
+            item.shadowColor.alpha = style.shadowOpacity;
         }
     }
 } 

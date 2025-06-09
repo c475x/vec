@@ -30,7 +30,6 @@
                     <app-property-row [value]="getGroupH(shape)" label="Height" unit="px"
                         (valueChange)="onPositionChange('h', +$event)"></app-property-row>
                 </app-section>
-
                 <!-- Actions -->
                 <app-section title="Actions">
                     <app-action-row label="Group" (action)="store.groupSelected()"
@@ -108,6 +107,8 @@
                         (valueChange)="onShadowOffsetXChange(+$event)"></app-property-row>
                     <app-property-row label="Offset Y" [value]="shape.style.shadowOffset?.y ?? 0" unit="px"
                         (valueChange)="onShadowOffsetYChange(+$event)"></app-property-row>
+                    <app-property-row label="Shadow opacity" [value]="(shape.style.shadowOpacity ?? 1) * 100" unit="%"
+                        (valueChange)="onStyleChange({ shadowOpacity: +$event/100 })"></app-property-row>
                     <app-color-row label="Color" [color]="shape.style.shadowColor ?? '#000000'" [fixed]="true"
                         (colorChange)="onStyleChange({ shadowColor: $event })"></app-color-row>
                 </app-section>

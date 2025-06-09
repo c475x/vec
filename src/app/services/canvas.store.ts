@@ -20,7 +20,8 @@ export class CanvasStore {
         opacity: 1,
         shadowColor: '#000000',
         shadowBlur: 0,
-        shadowOffset: { x: 0, y: 0 }
+        shadowOffset: { x: 0, y: 0 },
+        shadowOpacity: 1
     });
 
     /* Active tool (needed by sidebar to show/hide relevant options) */

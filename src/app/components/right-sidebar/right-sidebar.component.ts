@@ -146,29 +146,119 @@ export class RightSidebarComponent {
 
     // Event handlers
     onPositionChange(prop: 'x' | 'y' | 'w' | 'h', val: number) {
-        const sel = this.store.selectedIds$.value;
+        console.log('[sidebar] onPositionChange', prop, val, Array.from(this.store.selectedIds$.value));
+        const selIds = this.store.selectedIds$.value;
+        if (selIds.size === 0) return;
         this.store.updateShapes(shapes => {
             shapes.forEach(shape => {
-                if (!sel.has(shape.id)) return;
-                if (shape.type === 'rectangle') {
-                    if (prop === 'x') shape.topLeft.x = val;
-                    if (prop === 'y') shape.topLeft.y = val;
-                    if (prop === 'w') shape.size.width = val;
-                    if (prop === 'h') shape.size.height = val;
-                } else if (shape.type === 'ellipse') {
-                    if (prop === 'x') shape.center.x = val + (shape.radius?.width ?? 0);
-                    if (prop === 'y') shape.center.y = val + (shape.radius?.height ?? 0);
-                    if (prop === 'w' && shape.radius) shape.radius.width = val / 2;
-                    if (prop === 'h' && shape.radius) shape.radius.height = val / 2;
-                } else if (shape.type === 'image') {
-                    // Update image position and size; position is center
-                    if (prop === 'x') shape.position.x = val + shape.size.width / 2;
-                    if (prop === 'y') shape.position.y = val + shape.size.height / 2;
-                    if (prop === 'w') shape.size.width = val;
-                    if (prop === 'h') shape.size.height = val;
+                if (!selIds.has(shape.id)) return;
+                switch (shape.type) {
+                    case 'rectangle':
+                        if (prop === 'x') shape.topLeft.x = val;
+                        if (prop === 'y') shape.topLeft.y = val;
+                        if (prop === 'w') shape.size.width = Math.max(1, val);
+                        if (prop === 'h') shape.size.height = Math.max(1, val);
+                        break;
+                    case 'ellipse':
+                        if (prop === 'x') shape.center.x = val + shape.radius.width;
+                        if (prop === 'y') shape.center.y = val + shape.radius.height;
+                        if (prop === 'w') shape.radius.width = Math.max(1, val) / 2;
+                        if (prop === 'h') shape.radius.height = Math.max(1, val) / 2;
+                        break;
+                    case 'image':
+                        if (prop === 'x') shape.position.x = val + shape.size.width / 2;
+                        if (prop === 'y') shape.position.y = val + shape.size.height / 2;
+                        if (prop === 'w') shape.size.width = Math.max(1, val);
+                        if (prop === 'h') shape.size.height = Math.max(1, val);
+                        break;
+                    case 'path': {
+                        const p = shape as PathShape;
+                        const b = shape.paperObject!.bounds;
+                        if (prop === 'x' || prop === 'y') {
+                            const dx = prop === 'x' ? val - b.x : 0;
+                            const dy = prop === 'y' ? val - b.y : 0;
+                            (p as PathShape).segments.forEach(seg => {
+                                seg.point.x += dx;
+                                seg.point.y += dy;
+                            });
+                        } else if (prop === 'w' || prop === 'h') {
+                            const newW = prop === 'w' ? Math.max(1, val) : b.width;
+                            const newH = prop === 'h' ? Math.max(1, val) : b.height;
+                            const kx = newW / b.width;
+                            const ky = newH / b.height;
+                            const pivot = b.topLeft.clone();
+                            // Clone and scale the Paper.js path for accurate resizing
+                            const item = shape.paperObject as paper.Path;
+                            const clone = item.clone({ insert: false }) as paper.Path;
+                            clone.scale(kx, ky, pivot);
+                            p.segments = clone.segments.map(seg => seg.clone());
+                            p.closed = clone.closed;
+                            clone.remove();
+                        }
+                        break;
+                    }
+                    case 'group': {
+                        const grp = shape as GroupShape;
+                        const b = shape.paperObject!.bounds;
+                        if (prop === 'x' || prop === 'y') {
+                            const dx = prop === 'x' ? val - b.x : 0;
+                            const dy = prop === 'y' ? val - b.y : 0;
+                            grp.children.forEach(child => {
+                                if (child.type === 'rectangle') {
+                                    child.topLeft.x += dx;
+                                    child.topLeft.y += dy;
+                                } else if (child.type === 'ellipse') {
+                                    child.center.x += dx;
+                                    child.center.y += dy;
+                                } else if (child.type === 'image') {
+                                    child.position.x += dx;
+                                    child.position.y += dy;
+                                } else if (child.type === 'path') {
+                                    (child as PathShape).segments.forEach(seg => {
+                                        seg.point.x += dx;
+                                        seg.point.y += dy;
+                                    });
+                                }
+                            });
+                        } else if (prop === 'w' || prop === 'h') {
+                            const newW = prop === 'w' ? Math.max(1, val) : b.width;
+                            const newH = prop === 'h' ? Math.max(1, val) : b.height;
+                            const kx = newW / b.width;
+                            const ky = newH / b.height;
+                            const pivot = b.topLeft.clone();
+                            const groupItem = shape.paperObject as paper.Group;
+                            const clone = groupItem.clone({ insert: false }) as paper.Group;
+                            clone.scale(kx, ky, pivot);
+                            const grpModel = shape as GroupShape;
+                            clone.children.forEach((childClone, idx) => {
+                                const childModel = grpModel.children[idx];
+                                if (childModel.type === 'rectangle') {
+                                    childModel.topLeft = childClone.bounds.topLeft.clone();
+                                    childModel.size = childClone.bounds.size.clone();
+                                } else if (childModel.type === 'ellipse') {
+                                    childModel.center = childClone.bounds.center.clone();
+                                    childModel.radius = new paper.Size(
+                                        childClone.bounds.width / 2,
+                                        childClone.bounds.height / 2
+                                    );
+                                } else if (childModel.type === 'image') {
+                                    (childModel as any).position = childClone.bounds.center.clone();
+                                    (childModel as any).size = childClone.bounds.size.clone();
+                                } else if (childModel.type === 'path') {
+                                    (childModel as PathShape).segments = (childClone as paper.Path).segments.map(seg => seg.clone());
+                                    (childModel as PathShape).closed = (childClone as paper.Path).closed;
+                                }
+                            });
+                            clone.remove();
+                        }
+                        break;
+                    }
                 }
             });
         });
+        // Trigger canvas re-render via hideComments and shapes stream
+        this.store.hideComments$.next(this.store.hideComments$.value);
+        this.store.shapes$.next([...this.store.shapes$.value]);
     }
 
     onStyleChange(patch: Partial<ShapeStyle>) {
