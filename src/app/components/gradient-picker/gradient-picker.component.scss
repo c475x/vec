@@ -1,15 +1,18 @@
 .gp {
+  width: calc(100% - 8px);
   padding: 0.5rem;
-  border: 1px solid #f5f5f5;
+  border: 1px solid #7e7e7e;
   border-radius: 4px;
   font-family: 'SF Pro Display';
   font-weight: 600;
   color: #f5f5f5;
 }
+
 .gp-toggle {
   display: flex;
   margin-bottom: 0.5rem;
 }
+
 .gp-toggle button {
   flex: 1;
   padding: 0.25rem;
@@ -22,31 +25,48 @@
   font-weight: 600;
   font-size: 12px;
 }
+
 .gp-toggle button.active {
   background: #3A3A3C;
   color: #f5f5f5;
 }
+
 .gp-type {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   margin-bottom: 0.5rem;
 }
+
 .gp-type label {
   margin-right: 0.5rem;
   font-size: 12px;
 }
+
+.gp-type .gp-select {
+  flex: 1;
+}
+
 .gp-stop {
   display: flex;
   gap: 0.5rem;
   align-items: center;
   margin-bottom: 0.5rem;
 }
+
 .gp-preview {
+  display: block;
+  width: 100%;
   height: 32px;
-  border: 1px solid #ccc;
+  border: 1px solid #7e7e7e;
   border-radius: 4px;
   margin-top: 0.5rem;
+}
+
+.gp-preview canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 
 /* Ensure color rows fit within gradient picker */
@@ -56,13 +76,22 @@
   max-width: none;
 }
 
-/* Gradient stops list */
+/* Override property-row sizing and spacing inside gradient picker */
+:host ::ng-deep app-property-row .property-row {
+  width: 100% !important;
+  max-width: none !important;
+  margin-bottom: 0.5rem;
+}
+
+/* Stop-row layout: color box, input, controls */
 .stop-row {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.5rem;
   margin-bottom: 0.5rem;
 }
+
+/* Color box first */
 .stop-color-box {
   width: 16px;
   height: 16px;
@@ -70,24 +99,67 @@
   border: 1px solid #ccc;
   cursor: pointer;
 }
+
+/* Offset input */
 .stop-offset {
-  width: 50px;
+  flex: 1;
   height: 24px;
   background: #3A3A3C;
   border: 1px solid #555;
   outline: none;
   color: #F5F5F5;
   text-align: right;
-  padding: 0 4px;
+  padding: 0 8px;
   border-radius: 2px;
   font-family: 'SF Pro Display';
   font-size: 12px;
 }
+
+/* Controls container aligned to right */
+.stop-controls {
+  display: flex;
+  margin-left: auto;
+  gap: 0.25rem;
+  align-items: center;
+}
+
+.stop-controls button {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #F5F5F5;
+}
+
+.stop-controls button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Icon sizing */
+.stop-controls img {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+/* Remove legacy move-up/move-down rules */
+.stop-move-up,
+.stop-move-down {
+  display: none;
+}
+
 .stop-unit {
   font-family: 'SF Pro Display';
   font-size: 12px;
   color: #F5F5F5;
 }
+
 .stop-remove {
   background: none;
   border: none;
@@ -125,8 +197,9 @@
   font-size: 12px;
   outline: none;
 }
+
 .gp-select:focus {
-  border-color: #0c8ce9;
+  border-color: #646464;
 }
 
 /* Remove native number input spinners */
@@ -135,6 +208,7 @@
   -webkit-appearance: none;
   margin: 0;
 }
+
 .stop-offset {
-  // -moz-appearance: textfield;
+  -moz-appearance: textfield;
 }

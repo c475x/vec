@@ -26,6 +26,32 @@ export class SelectionRendererService {
 
     renderSelection(selectionLayer: paper.Layer, selectedItems: Set<PaperItemWithId>, config: BoundingBoxConfig): void {
         selectionLayer.removeChildren();
+        // If multiple items selected, draw one common bounding box (no handles) with dimensions
+        if (selectedItems.size > 1) {
+            const items = Array.from(selectedItems);
+            // Compute union of bounds
+            let unionBounds = items[0].bounds.clone();
+            for (let i = 1; i < items.length; i++) {
+                unionBounds = unionBounds.unite(items[i].bounds);
+            }
+            const padding = config.padding;
+            const expanded = unionBounds.expand(padding);
+            // Draw outline
+            const outline = new paper.Path.Rectangle({
+                rectangle: expanded,
+                strokeColor: new paper.Color(config.strokeColor),
+                strokeWidth: config.strokeWidth,
+                fillColor: null,
+                radius: 0,
+                opacity: 1,
+                guide: false
+            });
+            selectionLayer.addChild(outline);
+            // Draw dimensions for group
+            this.drawDimensions(selectionLayer, unionBounds, config);
+            return;
+        }
+        // Single item: draw normal bounding box with handles
         selectedItems.forEach(item => {
             this.drawBoundingBox(selectionLayer, item, selectedItems.size, config);
         });
@@ -116,6 +142,7 @@ export class SelectionRendererService {
                     fillColor: new paper.Color(config.handleFillColor),
                     strokeColor: new paper.Color(config.handleStrokeColor),
                     strokeWidth: config.handleStrokeWidth,
+                    opacity: 1,
                     data: { handle: h.name }
                 });
                 selectionLayer.addChild(rect);

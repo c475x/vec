@@ -14,20 +14,56 @@
   </div>
   <div *ngIf="fillType==='gradient'" class="gp-gradient">
     <div class="gp-type">
-      <label>Type:</label>
       <select [(ngModel)]="gradientType" (ngModelChange)="onGradientTypeChange($event)" class="gp-select">
         <option value="linear">Linear</option>
         <option value="radial">Radial</option>
       </select>
     </div>
+    <!-- Radial gradient settings -->
+    <ng-container *ngIf="gradientType==='radial'">
+      <app-property-row
+        label="Center X"
+        [value]="originX * 100"
+        unit="%"
+        (valueChange)="onOriginXChange($event)">
+      </app-property-row>
+      <app-property-row
+        label="Center Y"
+        [value]="originY * 100"
+        unit="%"
+        (valueChange)="onOriginYChange($event)">
+      </app-property-row>
+      <app-property-row
+        label="Radius"
+        [value]="radius * 100"
+        unit="%"
+        (valueChange)="onRadiusChange($event)">
+      </app-property-row>
+    </ng-container>
     <div class="stops-container">
       <div class="stop-row" *ngFor="let s of stops; let i = index">
         <div class="stop-color-box" [style.background]="s.color" (click)="openStopColorPicker(i)"></div>
         <input class="stop-offset" type="number" min="0" max="100" step="1" [value]="s.offset*100" (change)="onOffsetChange($any($event.target).value, i)" />
-        <button class="stop-remove" type="button" (click)="removeStop(i)">Remove</button>
+        <div class="stop-controls">
+          <button type="button" class="stop-control up" (click)="moveStopUp(i)" [disabled]="i===0">
+            <img src="icons/controls/up.svg" alt="Up" />
+          </button>
+          <button type="button" class="stop-control down" (click)="moveStopDown(i)" [disabled]="i===stops.length-1">
+            <img src="icons/controls/down.svg" alt="Down" />
+          </button>
+          <button type="button" class="stop-control remove" (click)="removeStop(i)" [disabled]="stops.length<=2">
+            <img src="icons/controls/remove.svg" alt="Remove" />
+          </button>
+        </div>
       </div>
-      <button class="stop-add" type="button" (click)="addStop()">Add Stop</button>
+      <button class="stop-add" type="button" (click)="addStop()">Add stop</button>
     </div>
-    <div class="gp-preview" [style.background]="preview"></div>
+    <!-- Preview -->
+    <ng-container *ngIf="gradientType === 'linear'">
+      <div class="gp-preview" [style.background]="preview"></div>
+    </ng-container>
+    <ng-container *ngIf="gradientType === 'radial'">
+      <canvas #previewCanvas class="gp-preview"></canvas>
+    </ng-container>
   </div>
 </div>

@@ -87,6 +87,7 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
     // For resize operation
     private initialShapeCopy: Shape | null = null;
     private resizeOrigin: paper.Point | null = null;
+    private initialPaperItem: paper.Path | null = null; // for path resizing
 
     // Bounding box style configuration
     private readonly boundingBoxConfig = {
@@ -110,6 +111,10 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
     private marqueeEnd: paper.Point | null = null;
 
     private subscriptions: Subscription[] = [];
+
+    private previewClones: PaperItemWithId[] = []; // for live move preview
+
+    private hasDragged: boolean = false;
 
     constructor(private store: CanvasStore, private renderer: ShapeRendererService, private selectionRenderer: SelectionRendererService) {}
 
@@ -185,6 +190,7 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
 
     private handleMouseDown(event: paper.ToolEvent): void {
         console.log('handleMouseDown at', event.point);
+        this.hasDragged = false;
         const point = event.point;
         this.dragStartPoint = point;
         this.lastMousePoint = point;
@@ -210,6 +216,10 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
                 this.initialShapeCopy = shape ? JSON.parse(JSON.stringify(shape)) as Shape : null;
             }
             this.resizeOrigin = point;
+            // Capture a clone of the Paper.js item for path resizing
+            if (this.resizingItem instanceof paper.Path) {
+                this.initialPaperItem = (this.resizingItem.clone({ insert: false }) as paper.Path);
+            }
             this.updateCanvas();
             return;
         }
@@ -230,6 +240,28 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
                             this.initialPositions.set(it.shapeId, it.position.clone());
                         }
                     });
+                    // Create live-preview clones and hide originals, preserving z-order
+                    const originals = Array.from(this.selectedItems);
+                    const originalIndices = originals.map(item => this.mainLayer.children.indexOf(item));
+                    this.previewClones = [];
+                    originals.forEach((item, idx) => {
+                        const shape = this.store.shapes$.value.find(s => s.id === item.shapeId);
+                        if (!shape) return;
+                        const clone = this.renderer.createPaperItem(shape) as PaperItemWithId;
+                        clone.shapeId = shape.id;
+                        // Insert clone at original index to preserve stacking
+                        this.mainLayer.insertChild(originalIndices[idx], clone);
+                        this.previewClones.push(clone);
+                    });
+                    // Replace selectedItems with clones and update movingItem to clone
+                    const origMovingId = this.movingItem?.shapeId;
+                    this.selectedItems.clear();
+                    this.previewClones.forEach(clone => this.selectedItems.add(clone));
+                    if (origMovingId != null) {
+                        this.movingItem = this.previewClones.find(c => c.shapeId === origMovingId) || null;
+                    }
+                    this.selectionLayer.removeChildren();
+                    this.project.view.update();
                     break;
                 }
             }
@@ -265,6 +297,28 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
                                 this.initialPositions.set(it.shapeId, it.position.clone());
                             }
                         });
+                        // Create live-preview clones and hide originals, preserving z-order
+                        const originals2 = Array.from(this.selectedItems);
+                        const originalIndices2 = originals2.map(item => this.mainLayer.children.indexOf(item));
+                        this.previewClones = [];
+                        originals2.forEach((item, idx) => {
+                            const shape = this.store.shapes$.value.find(s => s.id === item.shapeId);
+                            if (!shape) return;
+                            const clone = this.renderer.createPaperItem(shape) as PaperItemWithId;
+                            clone.shapeId = shape.id;
+                            // Insert clone at original index to preserve stacking
+                            this.mainLayer.insertChild(originalIndices2[idx], clone);
+                            this.previewClones.push(clone);
+                        });
+                        // Replace selectedItems with clones and update movingItem to clone
+                        const origMovingId2 = this.movingItem?.shapeId;
+                        this.selectedItems.clear();
+                        this.previewClones.forEach(clone => this.selectedItems.add(clone));
+                        if (origMovingId2 != null) {
+                            this.movingItem = this.previewClones.find(c => c.shapeId === origMovingId2) || null;
+                        }
+                        this.selectionLayer.removeChildren();
+                        this.project.view.update();
                         // Update store selection
                         if (event.modifiers.shift) {
                             this.store.toggle(item.shapeId);
@@ -290,6 +344,28 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
                             this.moveOffset = point.subtract(boxHit.position);
                             this.initialPositions.clear();
                             this.selectedItems.forEach(it => it.shapeId != null && this.initialPositions.set(it.shapeId, it.position.clone()));
+                            // Create live-preview clones and hide originals, preserving z-order
+                            const originals3 = Array.from(this.selectedItems);
+                            const originalIndices3 = originals3.map(item => this.mainLayer.children.indexOf(item));
+                            this.previewClones = [];
+                            originals3.forEach((item, idx) => {
+                                const shape = this.store.shapes$.value.find(s => s.id === item.shapeId);
+                                if (!shape) return;
+                                const clone = this.renderer.createPaperItem(shape) as PaperItemWithId;
+                                clone.shapeId = shape.id;
+                                // Insert clone at original index to preserve stacking
+                                this.mainLayer.insertChild(originalIndices3[idx], clone);
+                                this.previewClones.push(clone);
+                            });
+                            // Replace selectedItems with clones and update movingItem to clone
+                            const origMovingId3 = this.movingItem?.shapeId;
+                            this.selectedItems.clear();
+                            this.previewClones.forEach(clone => this.selectedItems.add(clone));
+                            if (origMovingId3 != null) {
+                                this.movingItem = this.previewClones.find(c => c.shapeId === origMovingId3) || null;
+                            }
+                            this.selectionLayer.removeChildren();
+                            this.project.view.update();
                             if (event.modifiers.shift) this.store.toggle(boxHit.shapeId);
                             else this.store.select(boxHit.shapeId);
                             this.updateCanvas();
@@ -320,6 +396,28 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
                         this.moveOffset = point.subtract(boxHit.position);
                         this.initialPositions.clear();
                         this.selectedItems.forEach(it => it.shapeId != null && this.initialPositions.set(it.shapeId, it.position.clone()));
+                        // Create live-preview clones and hide originals, preserving z-order
+                        const originals4 = Array.from(this.selectedItems);
+                        const originalIndices4 = originals4.map(item => this.mainLayer.children.indexOf(item));
+                        this.previewClones = [];
+                        originals4.forEach((item, idx) => {
+                            const shape = this.store.shapes$.value.find(s => s.id === item.shapeId);
+                            if (!shape) return;
+                            const clone = this.renderer.createPaperItem(shape) as PaperItemWithId;
+                            clone.shapeId = shape.id;
+                            // Insert clone at original index to preserve stacking
+                            this.mainLayer.insertChild(originalIndices4[idx], clone);
+                            this.previewClones.push(clone);
+                        });
+                        // Replace selectedItems with clones and update movingItem to clone
+                        const origMovingId4 = this.movingItem?.shapeId;
+                        this.selectedItems.clear();
+                        this.previewClones.forEach(clone => this.selectedItems.add(clone));
+                        if (origMovingId4 != null) {
+                            this.movingItem = this.previewClones.find(c => c.shapeId === origMovingId4) || null;
+                        }
+                        this.selectionLayer.removeChildren();
+                        this.project.view.update();
                         if (event.modifiers.shift) this.store.toggle(boxHit.shapeId);
                         else this.store.select(boxHit.shapeId);
                         this.updateCanvas();
@@ -429,6 +527,7 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
         const point = event.point;
         const delta = event.delta;
         console.log('handleMouseDrag called, activeHandle:', this.activeHandle, 'movingItem:', this.movingItem?.shapeId, 'resizingItem:', this.resizingItem?.shapeId, 'delta:', delta, 'point:', point);
+        if (this.movingItem) this.hasDragged = true;
 
         // Resize: update store shapes based on initial copy and origin
         if (this.resizingItem && this.activeHandle && this.initialBounds && this.initialShapeCopy && this.resizeOrigin) {
@@ -446,18 +545,17 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
             return;
         }
 
-        // Move preview: adjust item positions visually based on initialPositions
+        // Live preview: move clones rather than originals
         if (this.movingItem && this.dragStartPoint) {
-            console.log('Moving item in handleMouseDrag', this.movingItem.shapeId, 'delta from start:', event.point.subtract(this.dragStartPoint));
             const deltaFromStart = event.point.subtract(this.dragStartPoint);
-            this.selectedItems.forEach(item => {
-                const id = item.shapeId;
+            this.previewClones.forEach(clone => {
+                const id = clone.shapeId;
                 const start = id != null ? this.initialPositions.get(id) : null;
                 if (start) {
-                    item.position = start.add(deltaFromStart);
+                    clone.position = start.add(deltaFromStart);
                 }
             });
-            this.updateSelection();
+            this.project.view.update(); // render clones
             return;
         }
 
@@ -515,8 +613,9 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
             this.updateCanvas();
             return;
         }
-        // Always detect hovered shape underneath cursor
-        const hitResult = this.project.hitTest(event.point, {
+        // Determine hovered item using hitTestAll and z-order
+        let hovered: PaperItemWithId | null = null;
+        const hits = this.project.hitTestAll(event.point, {
             fill: true,
             stroke: true,
             segments: true,
@@ -524,16 +623,31 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
             tolerance: 5,
             match: (result: paper.HitResult) => result.item.layer === this.mainLayer
         });
-        if (hitResult?.item) {
-            // Find top-level item with shapeId for hover
-            let item = hitResult.item as PaperItemWithId;
-            while (item && item.shapeId == null) {
-                item = item.parent as PaperItemWithId;
+        if (hits.length) {
+            const hitItems = hits.map(r => {
+                let it = r.item as PaperItemWithId;
+                while (it && it.shapeId == null) {
+                    it = it.parent as PaperItemWithId;
+                }
+                return it;
+            });
+            const children = this.mainLayer.children as PaperItemWithId[];
+            for (let i = children.length - 1; i >= 0; i--) {
+                const child = children[i];
+                if (hitItems.includes(child)) {
+                    hovered = child;
+                    break;
+                }
             }
-            this.hoveredItem = item;
-        } else {
-            this.hoveredItem = null;
         }
+        // Fallback: if single shape selected and point within its bounds
+        if (!hovered && this.selectedItems.size === 1) {
+            const selItem = Array.from(this.selectedItems)[0];
+            if (selItem.bounds.contains(event.point)) {
+                hovered = selItem;
+            }
+        }
+        this.hoveredItem = hovered;
         this.updateCanvas();
     }
 
@@ -600,11 +714,17 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
             
             // Select the newly created shape
             this.store.select(shape.id);
-            
             this.currentPath.remove();
             this.currentPath = null;
         }
 
+        // If click (no drag) on selected clone, switch selection to that single object
+        if (this.movingItem && !this.hasDragged) {
+            const id = this.movingItem.shapeId;
+            if (id != null) {
+                this.store.select(id);
+            }
+        }
         // Commit moving changes to the store before clearing state
         if (this.movingItem) {
             this.store.updateShapes(shapes => {
@@ -657,22 +777,34 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
                 });
             });
         }
+
+        // Clean up preview clones
+        this.previewClones.forEach(clone => clone.remove());
+        this.previewClones = [];
+        // Force re-selection of moved objects to restore bounding box
+        const sel = new Set(this.store.selectedIds$.value);
+        this.store.selectedIds$.next(sel);
+
+        // Clear moving/resizing state before redraw
         this.movingItem = null;
         this.resizingItem = null;
         this.activeHandle = null;
+
+        // Re-render selection and canvas after move ends
+        this.updateSelection();
+        this.updateCanvas();
+        this.handleMouseMove(event);
 
         // Reset tool to Move after drawing
         this.tool = Tool.Move;
         this.toolChange.emit(this.tool);
 
-        // Ensure selection is up to date and re-render canvas
-        this.updateSelection();
-        this.updateCanvas();
         // Clear initial positions map after move
         this.initialPositions.clear();
         // Clear resize state
         this.initialShapeCopy = null;
         this.resizeOrigin = null;
+        this.initialPaperItem = null;
     }
 
     private moveSelectedItems(delta: paper.Point): void {
@@ -751,6 +883,24 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
     }
 
     private updateCanvas(): void {
+        if (this.previewClones && this.previewClones.length > 0) {
+            // Preview move: hide only originals of selected shapes, leave others visible
+            const selIds = new Set<number>(this.previewClones.map(c => c.shapeId!));
+            this.mainLayer.children.forEach(child => {
+                const pi = child as PaperItemWithId;
+                if (pi.shapeId != null && selIds.has(pi.shapeId) && !this.previewClones.includes(pi)) {
+                    child.visible = false;
+                } else {
+                    child.visible = true;
+                }
+            });
+            // Clear selection and hover outlines during preview
+            this.selectionLayer.removeChildren();
+            this.guideLayer.removeChildren();
+            // Force render
+            this.project.view.update();
+            return;
+        }
         const shapes = this.store.shapes$.value;
         // console.log('Updating canvas, shapes:', shapes);
         
@@ -776,17 +926,19 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
             }
         });
 
-        // Render selection visuals
-        this.selectionRenderer.renderSelection(this.selectionLayer, this.selectedItems, this.boundingBoxConfig as BoundingBoxConfig);
+        // Render selection visuals (skip during move)
+        if (!this.movingItem) {
+            this.selectionRenderer.renderSelection(this.selectionLayer, this.selectedItems, this.boundingBoxConfig as BoundingBoxConfig);
+        }
 
         // Render marquee selection
         if (this.marqueeActive && this.marqueeStart && this.marqueeEnd) {
             this.selectionRenderer.renderMarquee(this.guideLayer, this.marqueeStart, this.marqueeEnd);
         }
 
-        // Render hover outline only when Move tool active
-        if (this.tool === Tool.Move) {
-            this.selectionRenderer.renderHover(this.guideLayer, this.hoveredItem, this.boundingBoxConfig as BoundingBoxConfig);
+        // Render hover outline only when Move tool active (skip during move)
+        if (this.tool === Tool.Move && !this.movingItem) {
+            this.selectionRenderer.renderHover(this.selectionLayer, this.hoveredItem, this.boundingBoxConfig as BoundingBoxConfig);
         }
 
         // --- Preview for currentPath (pen, rect, ellipse) ---
@@ -1031,8 +1183,9 @@ export class CanvasComponent implements AfterViewInit, OnDestroy {
                     break;
                 }
                 case 'path': {
-                    const pathOrig = orig.paperObject as unknown as paper.Path;
-                    const pathS = s.paperObject as unknown as paper.Path;
+                    // Use initialPaperItem clone for correct path pivot
+                    const pathOrig = this.initialPaperItem!;
+                    const pathS = s.paperObject as paper.Path;
                 
                     // Determine pivot corner (opposite handle)
                     const pivot = new paper.Point(

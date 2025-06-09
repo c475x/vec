@@ -2,7 +2,7 @@
     <span class="label">{{ label }}</span>
     <div class="controls">
         <span class="hex select">{{ colorValue }}</span>
-        <img *ngIf="!fixed" class="eye-icon" [src]="visible ? 'icons/visible.svg' : 'icons/hidden.svg'"
+        <img *ngIf="!fixed" class="eye-icon" [src]="visible ? 'icons/controls/visible.svg' : 'icons/controls/hidden.svg'"
         (click)="onToggleVisible()" />
         <div class="color-box" (click)="openPicker()" [style.background]="colorValue"></div>
     </div>

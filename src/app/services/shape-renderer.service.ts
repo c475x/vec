@@ -130,21 +130,30 @@ export class ShapeRendererService {
             } else {
                 // Domain Gradient object
                 const g = style.fill as any;
-                const stopsPairs: [paper.Color, number][] = g.stops.map((s: any) => [new paper.Color(s.color), s.offset]);
-                const gradConfig: any = { stops: stopsPairs };
-                if (g.type === 'radial') gradConfig.radial = true;
+                // Map domain stops to paper.Color stops
+                const stops: [paper.Color, number][] = g.stops.map((s: any) => [new paper.Color(s.color), s.offset]);
+                // Create a gradient, pass radial flag
+                const gradient = new (paper as any).Gradient(stops, g.type === 'radial');
                 const bounds = (item as any).bounds as paper.Rectangle;
-                const originPt = new paper.Point(bounds.x + g.origin.x * bounds.width, bounds.y + g.origin.y * bounds.height);
-                const colorConfig: any = { gradient: gradConfig, origin: originPt };
+                const originPt = new paper.Point(
+                    bounds.x + g.origin.x * bounds.width,
+                    bounds.y + g.origin.y * bounds.height
+                );
+                let destPt: paper.Point;
                 if (g.type === 'linear') {
-                    const destPt = new paper.Point(bounds.x + g.destination.x * bounds.width, bounds.y + g.destination.y * bounds.height);
-                    colorConfig.destination = destPt;
+                    destPt = new paper.Point(
+                        bounds.x + g.destination.x * bounds.width,
+                        bounds.y + g.destination.y * bounds.height
+                    );
                 } else {
-                    const radiusPx = g.radius * Math.max(bounds.width, bounds.height);
-                    colorConfig.radius = radiusPx;
+                    // For radial, set destination horizontally at desired radius
+                    destPt = new paper.Point(
+                        originPt.x + g.radius * Math.max(bounds.width, bounds.height),
+                        originPt.y
+                    );
                 }
                 // Assign fillColor via paper.Color to render gradient
-                item.fillColor = new paper.Color(colorConfig);
+                item.fillColor = new (paper as any).Color(gradient, originPt, destPt);
             }
         } else {
             // Clear fill when disabled or absent
