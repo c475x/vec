@@ -752,7 +752,6 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
             if (this.dragStartPoint) {
                 const upPoint = event.point;
                 const delta = upPoint.subtract(this.dragStartPoint);
-                console.log('[Cursor Delta Debug]', 'downPoint=', this.dragStartPoint, 'upPoint=', upPoint, 'delta=', delta);
             }
             const textIds = Array.from(this.store.selectedIds$.value).filter(id => {
                 const sh = this.store.shapes$.value.find(s => s.id === id);
@@ -976,8 +975,8 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
             this.selectionRenderer.renderMarquee(this.guideLayer, this.marqueeStart, this.marqueeEnd);
         }
 
-        // Render hover outline only when Move tool active, not moving/resizing, single selection
-        if (this.tool === Tool.Move && !this.movingItem && !this.resizingItem && !this.resizingMultiple && this.selectedItems.size <= 1) {
+        // Hover outline (skip if disabled)
+        if (!this.store.hideHover$.value && this.tool === Tool.Move && !this.movingItem && !this.resizingItem && !this.resizingMultiple && this.selectedItems.size <= 1) {
             this.selectionRenderer.renderHover(this.guideLayer, this.hoveredItem, this.boundingBoxConfig as BoundingBoxConfig);
         }
 

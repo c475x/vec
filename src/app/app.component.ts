@@ -23,6 +23,6 @@ export class AppComponent {
         e.preventDefault();
     
     }
-    title = 'vector-studio';
+    title = 'vec';
     currentTool: Tool = Tool.Move;
 }

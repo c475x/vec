@@ -281,45 +281,13 @@ export class RightSidebarComponent {
     }
 
     // Export functionality
+    /** Delegate export based on format */
     exportAs(format: 'png' | 'jpg' | 'svg'): void {
-        if (!this.exportContainer) return;
-
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-
-        // Set canvas size to match the artboard
-        canvas.width = 800;  // Set to your artboard width
-        canvas.height = 600; // Set to your artboard height
-
-        // Draw using Paper.js
-        const project = new paper.Project(canvas);
-        this.store.shapes$.value.forEach(shape => {
-            if (shape.paperObject) {
-                shape.paperObject.clone({ insert: true });
-            }
-        });
-
-        // Export
-        let blob: Blob;
         if (format === 'svg') {
-            const svg = project.exportSVG({ asString: true }) as string;
-            blob = new Blob([svg], { type: 'image/svg+xml' });
+            this.exportService.exportSVG();
         } else {
-            const dataUrl = canvas.toDataURL(`image/${format}`);
-            const base64 = dataUrl.split(',')[1];
-            const byteString = atob(base64);
-            const byteArray = new Uint8Array(byteString.length);
-            for (let i = 0; i < byteString.length; i++) {
-                byteArray[i] = byteString.charCodeAt(i);
-            }
-            blob = new Blob([byteArray], { type: `image/${format}` });
+            this.exportService.exportImage(format);
         }
-
-        this.downloadBlob(blob, `vector-studio.${format}`);
-
-        // Cleanup
-        project.remove();
     }
 
     private downloadBlob(blob: Blob, filename: string) {
@@ -347,15 +315,13 @@ export class RightSidebarComponent {
         }
     }
 
-    /** Export shapes to JSON, skipping images; selection only if any selected */
+    /** Export shapes to JSON */
     exportJSON(): void {
-        const shapes = this.store.selectedIds$.value.size
-            ? this.store.shapes$.value.filter(s => this.store.selectedIds$.value.has(s.id))
-            : this.store.shapes$.value;
+        const shapes = this.store.shapes$.value;
         this.exportService.exportJSON(shapes);
     }
 
-    /** Open JSON file picker and import shapes */
+    /** Open file picker and import shapes from JSON */
     importJSON(): void {
         this.exportService.importJSON();
     }

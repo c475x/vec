@@ -30,15 +30,15 @@ export class LeftSidebarComponent {
         this.shapes$ = this.store.shapes$;
         this.selectedIds$ = this.store.selectedIds$;
 
-        // подрядок слоев сверху-вниз для отображения в списке
+        // order layers top-to-bottom for display in the list
         this.shapesReversed$ = store.shapes$.pipe(
             map(arr => arr.slice().reverse())
         );
 
-        // подписка один раз на появление новых слоёв
+        // subscribe once for new layers
         this.store.shapes$.subscribe(arr => {
             arr.forEach(s => {
-                // присваиваем defaultNames только один раз на каждый id
+                // assign defaultNames only once per id
                 if (!this.defaultNames[s.id]) {
                     const base = s.type.charAt(0).toUpperCase() + s.type.slice(1);
                     this.counts[base] = (this.counts[base] || 0) + 1;
@@ -58,7 +58,7 @@ export class LeftSidebarComponent {
         return this.store.shapes$.value.find(s => s.id === sel);
     }
 
-    // temp
+    // temporary
     onColorChange(newColor: string) {
         this.store.updateStyle({ fill: newColor });
     }

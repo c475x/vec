@@ -30,6 +30,9 @@ export class CanvasStore {
     /* Whether to hide comments (needed for export) */
     hideComments$ = new BehaviorSubject<boolean>(false);
 
+    /* Whether to hide hover outlines (used during export) */
+    hideHover$ = new BehaviorSubject<boolean>(false);
+
     /* Active text properties for new shapes or selected text shapes */
     readonly activeTextProps$ = new BehaviorSubject<{ fontFamily: string; fontSize: number; justification: string }>({
         fontFamily: 'SF Pro Text',
@@ -139,13 +142,14 @@ export class CanvasStore {
             const others = arr.filter(s => !ids.includes(s.id));
 
             if (pathShapes.length >= 2) {
-                // Merge all selected paths into one
+                // Merge all selected paths into one, preserving first path's style
+                const baseStyle = pathShapes[0].style;
                 const mergedPath: Shape = {
                     id: Date.now(),
                     type: 'path',
                     segments: pathShapes.flatMap(p => p.type === 'path' ? p.segments : []),
                     closed: false,
-                    style: { ...this.activeStyle$.value }
+                    style: { ...baseStyle }
                 };
                 this.selectedIds$.next(new Set([mergedPath.id]));
                 arr.splice(0, arr.length, ...others, mergedPath);
@@ -170,7 +174,7 @@ export class CanvasStore {
                         const p = s as any;
                         clone = {
                             ...JSON.parse(JSON.stringify(p)),
-                            id: baseId + Math.random(),
+                            id: baseId * 1000000 + Math.floor(Math.random() * 1000000),
                             segments: p.segments.map((seg: any) => ({
                                 point: { x: seg.point.x + offset, y: seg.point.y + offset },
                                 handleIn: seg.handleIn ? { x: seg.handleIn.x, y: seg.handleIn.y } : undefined,
@@ -179,55 +183,9 @@ export class CanvasStore {
                         };
                         break;
                     }
-                    case 'image': {
-                        // Clone ImageShape with proper Point and Size instances
-                        const im = s as any as ImageShape;
-                        clone = {
-                            id: Date.now() + Math.random(), // FIXME: prevent duplicate ids (migrate to uuid?)
-                            type: 'image',
-                            source: im.source,
-                            position: new paper.Point(im.position.x + offset, im.position.y + offset),
-                            size: new paper.Size(im.size.width, im.size.height),
-                            style: { ...im.style }
-                        } as ImageShape;
-                        break;
-                    }
-                    case 'group': {
-                        const g = s as any;
-                        // Deep clone the group and its children
-                        const groupClone = JSON.parse(JSON.stringify(g)) as any;
-                        groupClone.id = baseId + Math.random();
-                        // Clone and offset each child in the group
-                        groupClone.children = (groupClone.children || []).map((child: any) => {
-                            const childClone = JSON.parse(JSON.stringify(child));
-                            childClone.id = baseId + Math.random();
-                            if (childClone.topLeft) {
-                                childClone.topLeft.x += offset;
-                                childClone.topLeft.y += offset;
-                            }
-                            if (childClone.center) {
-                                childClone.center.x += offset;
-                                childClone.center.y += offset;
-                            }
-                            if (childClone.segments) {
-                                childClone.segments = childClone.segments.map((seg: any) => ({
-                                    point: { x: seg.point.x + offset, y: seg.point.y + offset },
-                                    handleIn: seg.handleIn ? { x: seg.handleIn.x + offset, y: seg.handleIn.y + offset } : undefined,
-                                    handleOut: seg.handleOut ? { x: seg.handleOut.x + offset, y: seg.handleOut.y + offset } : undefined
-                                }));
-                            }
-                            if (childClone.position) {
-                                childClone.position.x += offset;
-                                childClone.position.y += offset;
-                            }
-                            return childClone;
-                        });
-                        clone = groupClone;
-                        break;
-                    }
                     default:
                         clone = JSON.parse(JSON.stringify(s));
-                        clone.id = baseId + Math.random();
+                        clone.id = baseId * 1000000 + Math.floor(Math.random() * 1000000);
                 }
                 clones.push(clone);
             });

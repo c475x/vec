@@ -4,7 +4,7 @@
     <div class="comment-tooltip" [class.visible]="showTooltip || editing"
          (mouseenter)="onMouseEnter()" (mouseleave)="onMouseLeave()"
          (click)="!editing && onTextClick()">
-        <!-- Header: time (left) and delete (right) -->
+        <!-- Header: creation time and delete button -->
         <div class="comment-header" *ngIf="!editing">
             <span class="comment-time">{{ time }}</span>
             <button class="delete-btn" (click)="onDelete($event)">×</button>

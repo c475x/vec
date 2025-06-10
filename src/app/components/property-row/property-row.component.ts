@@ -43,7 +43,6 @@ export class PropertyRowComponent implements OnChanges {
             inp.focus();
             inp.select();
         }, 10);
-        // console.log('[property-row] startEdit:', this.label, this.displayValue);
     }
 
     finishEdit(): void {
@@ -101,6 +100,5 @@ export class PropertyRowComponent implements OnChanges {
     private cancelEdit(): void {
         this.editing = false;
         this.displayValue = this.value;
-        // console.log('cancel edit');
     }
 }
