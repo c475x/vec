@@ -6,11 +6,13 @@
                 [disabled]="!(canGroup$ | async)"></app-action-row>
             <app-action-row label="Ungroup" (action)="store.ungroupSelected()"
                 [disabled]="!(canUngroup$ | async)"></app-action-row>
+            <app-action-row label="Duplicate" (action)="store.duplicateSelected()"
+                [disabled]="sel.size === 0"></app-action-row>
             <app-action-row label="Merge paths" (action)="store.mergePaths()"
                 [disabled]="!(canMerge$ | async)"></app-action-row>
-            <app-action-row label="Bring to front" (action)="store.bringToFront()"
+            <app-action-row label="Bring to front" (action)="onBringToFront($event)"
                 [disabled]="!(canReorder$ | async)"></app-action-row>
-            <app-action-row label="Send to back" (action)="store.sendToBack()"
+            <app-action-row label="Send to back" (action)="onSendToBack($event)"
                 [disabled]="!(canReorder$ | async)"></app-action-row>
         </app-section>
     </ng-container>
@@ -36,11 +38,13 @@
                         [disabled]="!(canGroup$ | async)"></app-action-row>
                     <app-action-row label="Ungroup" (action)="store.ungroupSelected()"
                         [disabled]="!(canUngroup$ | async)"></app-action-row>
+                    <app-action-row label="Duplicate" (action)="store.duplicateSelected()"
+                        [disabled]="sel.size === 0"></app-action-row>
                     <app-action-row label="Merge paths" (action)="store.mergePaths()"
                         [disabled]="!(canMerge$ | async)"></app-action-row>
-                    <app-action-row label="Bring to front" (action)="store.bringToFront()"
+                    <app-action-row label="Bring to front" (action)="onBringToFront($event)"
                         [disabled]="!(canReorder$ | async)"></app-action-row>
-                    <app-action-row label="Send to back" (action)="store.sendToBack()"
+                    <app-action-row label="Send to back" (action)="onSendToBack($event)"
                         [disabled]="!(canReorder$ | async)"></app-action-row>
                 </app-section>
             </ng-container>
@@ -65,11 +69,13 @@
                         [disabled]="!(canGroup$ | async)"></app-action-row>
                     <app-action-row label="Ungroup" (action)="store.ungroupSelected()"
                         [disabled]="!(canUngroup$ | async)"></app-action-row>
+                    <app-action-row label="Duplicate" (action)="store.duplicateSelected()"
+                        [disabled]="sel.size === 0"></app-action-row>
                     <app-action-row label="Merge paths" (action)="store.mergePaths()"
                         [disabled]="!(canMerge$ | async)"></app-action-row>
-                    <app-action-row label="Bring to front" (action)="store.bringToFront()"
+                    <app-action-row label="Bring to front" (action)="onBringToFront($event)"
                         [disabled]="!(canReorder$ | async)"></app-action-row>
-                    <app-action-row label="Send to back" (action)="store.sendToBack()"
+                    <app-action-row label="Send to back" (action)="onSendToBack($event)"
                         [disabled]="!(canReorder$ | async)"></app-action-row>
                 </app-section>
 
@@ -77,9 +83,9 @@
                 <app-section title="Style">
                     <app-property-row label="Opacity" [value]="(shape.style.opacity ?? 1) * 100" unit="%"
                         (valueChange)="onStyleChange({ opacity: +$event/100 })"></app-property-row>
-                    <!-- Corner radius for rectangles -->
-                    <ng-container *ngIf="shape.type === 'rectangle'">
-                        <app-property-row label="Corner radius" [value]="(shape.radius ?? 0)" unit="px"
+                    <!-- Corner radius for rectangle-like paths -->
+                    <ng-container *ngIf="shape.type === 'path' && shape.cornerRadius !== undefined">
+                        <app-property-row label="Corner radius" [value]="shape.cornerRadius || 0" unit="px"
                             (valueChange)="onCornerRadiusChange(+$event)"></app-property-row>
                     </ng-container>
                     <!-- Fill: Solid/Gradient picker -->

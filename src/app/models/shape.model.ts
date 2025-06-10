@@ -56,19 +56,7 @@ export interface PathShape extends BaseShape {
     type: 'path';
     segments: paper.Segment[];
     closed: boolean;
-}
-
-export interface RectangleShape extends BaseShape {
-    type: 'rectangle';
-    topLeft: paper.Point;
-    size: paper.Size;
-    radius?: number;
-}
-
-export interface EllipseShape extends BaseShape {
-    type: 'ellipse';
-    center: paper.Point;
-    radius: paper.Size;
+    cornerRadius?: number;
 }
 
 export interface TextShape extends BaseShape {
@@ -95,8 +83,6 @@ export interface GroupShape extends BaseShape {
 
 export type Shape = 
     | PathShape 
-    | RectangleShape 
-    | EllipseShape 
     | TextShape 
     | ImageShape 
     | GroupShape;

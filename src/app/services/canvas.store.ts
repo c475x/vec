@@ -1,6 +1,6 @@
 import { Injectable } from '@angular/core';
 import { BehaviorSubject } from 'rxjs';
-import { Shape, ShapeStyle } from '../models/shape.model';
+import { Shape, ShapeStyle, ImageShape } from '../models/shape.model';
 import { Tool } from '../models/tool.enum';
 import * as paper from 'paper';
 
@@ -146,6 +146,89 @@ export class CanvasStore {
         });
     }
 
+    /** Duplicate all selected shapes with new IDs and offset positions by 10px */
+    duplicateSelected(): void {
+        const sel = [...this.selectedIds$.value];
+        if (sel.length === 0) return;
+        this.updateShapes(arr => {
+            const clones: any[] = [];
+            sel.forEach(id => {
+                const s = arr.find(sh => sh.id === id);
+                if (!s) return;
+                const baseId = Date.now();
+                const offset = 10;
+                let clone: any;
+                switch (s.type) {
+                    case 'path': {
+                        const p = s as any;
+                        clone = {
+                            ...JSON.parse(JSON.stringify(p)),
+                            id: baseId + Math.random(),
+                            segments: p.segments.map((seg: any) => ({
+                                point: { x: seg.point.x + offset, y: seg.point.y + offset },
+                                handleIn: seg.handleIn ? { x: seg.handleIn.x, y: seg.handleIn.y } : undefined,
+                                handleOut: seg.handleOut ? { x: seg.handleOut.x, y: seg.handleOut.y } : undefined
+                            }))
+                        };
+                        break;
+                    }
+                    case 'image': {
+                        // Clone ImageShape with proper Point and Size instances
+                        const im = s as any as ImageShape;
+                        clone = {
+                            id: Date.now() + Math.random(),
+                            type: 'image',
+                            source: im.source,
+                            position: new paper.Point(im.position.x + offset, im.position.y + offset),
+                            size: new paper.Size(im.size.width, im.size.height),
+                            style: { ...im.style }
+                        } as ImageShape;
+                        break;
+                    }
+                    case 'group': {
+                        const g = s as any;
+                        // Deep clone the group and its children
+                        const groupClone = JSON.parse(JSON.stringify(g)) as any;
+                        groupClone.id = baseId + Math.random();
+                        // Clone and offset each child in the group
+                        groupClone.children = (groupClone.children || []).map((child: any) => {
+                            const childClone = JSON.parse(JSON.stringify(child));
+                            childClone.id = baseId + Math.random();
+                            if (childClone.topLeft) {
+                                childClone.topLeft.x += offset;
+                                childClone.topLeft.y += offset;
+                            }
+                            if (childClone.center) {
+                                childClone.center.x += offset;
+                                childClone.center.y += offset;
+                            }
+                            if (childClone.segments) {
+                                childClone.segments = childClone.segments.map((seg: any) => ({
+                                    point: { x: seg.point.x + offset, y: seg.point.y + offset },
+                                    handleIn: seg.handleIn ? { x: seg.handleIn.x + offset, y: seg.handleIn.y + offset } : undefined,
+                                    handleOut: seg.handleOut ? { x: seg.handleOut.x + offset, y: seg.handleOut.y + offset } : undefined
+                                }));
+                            }
+                            if (childClone.position) {
+                                childClone.position.x += offset;
+                                childClone.position.y += offset;
+                            }
+                            return childClone;
+                        });
+                        clone = groupClone;
+                        break;
+                    }
+                    default:
+                        clone = JSON.parse(JSON.stringify(s));
+                        clone.id = baseId + Math.random();
+                }
+                clones.push(clone);
+            });
+            arr.push(...clones);
+            this.selectedIds$.next(new Set(clones.map(c => c.id)));
+        });
+    }
+
     /* ────────── Layer Operations ────────── */
     bringToFront(): void {
         const ids = this.selectedIds$.value;
@@ -166,6 +249,26 @@ export class CanvasStore {
                     [arr[i], arr[i - 1]] = [arr[i - 1], arr[i]];
                 }
             }
+        });
+    }
+
+    /** Move selected shapes to absolute front (top of z-order) */
+    bringToFrontAll(): void {
+        const ids = this.selectedIds$.value;
+        this.updateShapes(arr => {
+            const selected = arr.filter(s => ids.has(s.id));
+            const others = arr.filter(s => !ids.has(s.id));
+            arr.splice(0, arr.length, ...others, ...selected);
+        });
+    }
+
+    /** Move selected shapes to absolute back (bottom of z-order) */
+    sendToBackAll(): void {
+        const ids = this.selectedIds$.value;
+        this.updateShapes(arr => {
+            const selected = arr.filter(s => ids.has(s.id));
+            const others = arr.filter(s => !ids.has(s.id));
+            arr.splice(0, arr.length, ...selected, ...others);
         });
     }
 }

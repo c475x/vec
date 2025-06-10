@@ -11,5 +11,5 @@ import { CommonModule } from '@angular/common';
 export class ActionRowComponent {
     @Input() label!: string;
     @Input() disabled: boolean = false;
-    @Output() action = new EventEmitter<void>();
+    @Output() action = new EventEmitter<MouseEvent>();
 }

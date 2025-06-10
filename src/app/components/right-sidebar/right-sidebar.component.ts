@@ -76,8 +76,6 @@ export class RightSidebarComponent {
         this.canvasX$ = this.singleShape$.pipe(
             map(s => {
                 if (!s) return 0;
-                if (s.type === 'rectangle') return s.topLeft.x;
-                if (s.type === 'ellipse') return s.center.x - s.radius.width;
                 if (s.type === 'path') return (s.paperObject?.bounds.x ?? 0);
                 if (s.type === 'image') return (s.position.x - s.size.width / 2);
                 return 0;
@@ -86,8 +84,6 @@ export class RightSidebarComponent {
         this.canvasY$ = this.singleShape$.pipe(
             map(s => {
                 if (!s) return 0;
-                if (s.type === 'rectangle') return s.topLeft.y;
-                if (s.type === 'ellipse') return s.center.y - s.radius.height;
                 if (s.type === 'path') return (s.paperObject?.bounds.y ?? 0);
                 if (s.type === 'image') return (s.position.y - s.size.height / 2);
                 return 0;
@@ -96,8 +92,6 @@ export class RightSidebarComponent {
         this.canvasW$ = this.singleShape$.pipe(
             map(s => {
                 if (!s) return 0;
-                if (s.type === 'rectangle') return s.size.width;
-                if (s.type === 'ellipse') return s.radius.width * 2;
                 if (s.type === 'path') return (s.paperObject?.bounds.width ?? 0);
                 if (s.type === 'image') return s.size.width;
                 return 0;
@@ -106,8 +100,6 @@ export class RightSidebarComponent {
         this.canvasH$ = this.singleShape$.pipe(
             map(s => {
                 if (!s) return 0;
-                if (s.type === 'rectangle') return s.size.height;
-                if (s.type === 'ellipse') return s.radius.height * 2;
                 if (s.type === 'path') return (s.paperObject?.bounds.height ?? 0);
                 if (s.type === 'image') return s.size.height;
                 return 0;
@@ -153,24 +145,6 @@ export class RightSidebarComponent {
             shapes.forEach(shape => {
                 if (!selIds.has(shape.id)) return;
                 switch (shape.type) {
-                    case 'rectangle':
-                        if (prop === 'x') shape.topLeft.x = val;
-                        if (prop === 'y') shape.topLeft.y = val;
-                        if (prop === 'w') shape.size.width = Math.max(1, val);
-                        if (prop === 'h') shape.size.height = Math.max(1, val);
-                        break;
-                    case 'ellipse':
-                        if (prop === 'x') shape.center.x = val + shape.radius.width;
-                        if (prop === 'y') shape.center.y = val + shape.radius.height;
-                        if (prop === 'w') shape.radius.width = Math.max(1, val) / 2;
-                        if (prop === 'h') shape.radius.height = Math.max(1, val) / 2;
-                        break;
-                    case 'image':
-                        if (prop === 'x') shape.position.x = val + shape.size.width / 2;
-                        if (prop === 'y') shape.position.y = val + shape.size.height / 2;
-                        if (prop === 'w') shape.size.width = Math.max(1, val);
-                        if (prop === 'h') shape.size.height = Math.max(1, val);
-                        break;
                     case 'path': {
                         const p = shape as PathShape;
                         const b = shape.paperObject!.bounds;
@@ -197,6 +171,12 @@ export class RightSidebarComponent {
                         }
                         break;
                     }
+                    case 'image':
+                        if (prop === 'x') shape.position.x = val + shape.size.width / 2;
+                        if (prop === 'y') shape.position.y = val + shape.size.height / 2;
+                        if (prop === 'w') shape.size.width = Math.max(1, val);
+                        if (prop === 'h') shape.size.height = Math.max(1, val);
+                        break;
                     case 'group': {
                         const grp = shape as GroupShape;
                         const b = shape.paperObject!.bounds;
@@ -204,20 +184,14 @@ export class RightSidebarComponent {
                             const dx = prop === 'x' ? val - b.x : 0;
                             const dy = prop === 'y' ? val - b.y : 0;
                             grp.children.forEach(child => {
-                                if (child.type === 'rectangle') {
-                                    child.topLeft.x += dx;
-                                    child.topLeft.y += dy;
-                                } else if (child.type === 'ellipse') {
-                                    child.center.x += dx;
-                                    child.center.y += dy;
-                                } else if (child.type === 'image') {
-                                    child.position.x += dx;
-                                    child.position.y += dy;
-                                } else if (child.type === 'path') {
+                                if (child.type === 'path') {
                                     (child as PathShape).segments.forEach(seg => {
                                         seg.point.x += dx;
                                         seg.point.y += dy;
                                     });
+                                } else if (child.type === 'image') {
+                                    child.position.x += dx;
+                                    child.position.y += dy;
                                 }
                             });
                         } else if (prop === 'w' || prop === 'h') {
@@ -232,21 +206,12 @@ export class RightSidebarComponent {
                             const grpModel = shape as GroupShape;
                             clone.children.forEach((childClone, idx) => {
                                 const childModel = grpModel.children[idx];
-                                if (childModel.type === 'rectangle') {
-                                    childModel.topLeft = childClone.bounds.topLeft.clone();
-                                    childModel.size = childClone.bounds.size.clone();
-                                } else if (childModel.type === 'ellipse') {
-                                    childModel.center = childClone.bounds.center.clone();
-                                    childModel.radius = new paper.Size(
-                                        childClone.bounds.width / 2,
-                                        childClone.bounds.height / 2
-                                    );
+                                if (childModel.type === 'path') {
+                                    (childModel as PathShape).segments = (childClone as paper.Path).segments.map(seg => seg.clone());
+                                    (childModel as PathShape).closed = (childClone as paper.Path).closed;
                                 } else if (childModel.type === 'image') {
                                     (childModel as any).position = childClone.bounds.center.clone();
                                     (childModel as any).size = childClone.bounds.size.clone();
-                                } else if (childModel.type === 'path') {
-                                    (childModel as PathShape).segments = (childClone as paper.Path).segments.map(seg => seg.clone());
-                                    (childModel as PathShape).closed = (childClone as paper.Path).closed;
                                 }
                             });
                             clone.remove();
@@ -259,6 +224,8 @@ export class RightSidebarComponent {
         // Trigger canvas re-render via hideComments and shapes stream
         this.store.hideComments$.next(this.store.hideComments$.value);
         this.store.shapes$.next([...this.store.shapes$.value]);
+        // Trigger canvas update by simulating resize event
+        window.dispatchEvent(new Event('resize'));
     }
 
     onStyleChange(patch: Partial<ShapeStyle>) {
@@ -281,16 +248,18 @@ export class RightSidebarComponent {
         this.onStyleChange({ shadowOffset: { x, y: value } });
     }
 
-    // Handle corner radius change for rectangles
+    // Handle corner radius change for rectangle-like paths (PathShapes)
     onCornerRadiusChange(value: number): void {
         const sel = this.store.selectedIds$.value;
+        // Only update when exactly one shape selected
+        if (sel.size !== 1) return;
+        // Update model cornerRadius; canvas will re-render via shapes$ subscription
         this.store.updateShapes(shapes => {
-            shapes.forEach(shape => {
-                if (!sel.has(shape.id)) return;
-                if (shape.type === 'rectangle' || shape.type === 'image') {
-                    (shape as any).radius = value;
-                }
-            });
+            const id = [...sel][0];
+            const shape = shapes.find(s => s.id === id);
+            if (shape && shape.type === 'path') {
+                (shape as PathShape).cornerRadius = value;
+            }
         });
     }
 
@@ -342,5 +311,22 @@ export class RightSidebarComponent {
         link.download = filename;
         link.click();
         URL.revokeObjectURL(link.href);
+    }
+
+    // Actions with shift key support for z-order
+    onBringToFront(event: MouseEvent): void {
+        if (event.shiftKey) {
+            this.store.bringToFrontAll();
+        } else {
+            this.store.bringToFront();
+        }
+    }
+
+    onSendToBack(event: MouseEvent): void {
+        if (event.shiftKey) {
+            this.store.sendToBackAll();
+        } else {
+            this.store.sendToBack();
+        }
     }
 }

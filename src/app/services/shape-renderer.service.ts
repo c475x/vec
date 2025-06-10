@@ -1,21 +1,31 @@
 import { Injectable } from '@angular/core';
 import paper from 'paper';
-import { Shape, PathShape, RectangleShape, EllipseShape, TextShape, ImageShape, GroupShape, ShapeStyle } from '../models/shape.model';
+import { Shape, PathShape, TextShape, ImageShape, GroupShape, ShapeStyle } from '../models/shape.model';
 
 @Injectable({ providedIn: 'root' })
 export class ShapeRendererService {
     createPaperItem(shape: Shape): paper.Item | null {
         let item: paper.Item | null = null;
         switch (shape.type) {
-            case 'path':
-                item = this.createPath(shape as PathShape);
+            case 'path': {
+                const ps = shape as PathShape;
+                // Render rounded rectangles when cornerRadius is defined
+                if (ps.cornerRadius !== undefined) {
+                    // Compute bounding box from segments
+                    const xs = ps.segments.map(s => s.point.x);
+                    const ys = ps.segments.map(s => s.point.y);
+                    const x1 = Math.min(...xs);
+                    const y1 = Math.min(...ys);
+                    const x2 = Math.max(...xs);
+                    const y2 = Math.max(...ys);
+                    const rect = new paper.Rectangle(x1, y1, x2 - x1, y2 - y1);
+                    item = new paper.Path.Rectangle({ rectangle: rect, radius: ps.cornerRadius });
+                } else {
+                    // Default path rendering
+                    item = this.createPath(ps);
+                }
                 break;
-            case 'rectangle':
-                item = this.createRectangle(shape as RectangleShape);
-                break;
-            case 'ellipse':
-                item = this.createEllipse(shape as EllipseShape);
-                break;
+            }
             case 'text':
                 item = this.createText(shape as TextShape);
                 break;
@@ -42,25 +52,6 @@ export class ShapeRendererService {
         ));
         path.closed = shape.closed;
         return path;
-    }
-
-    private createRectangle(shape: RectangleShape): paper.Path.Rectangle {
-        return new paper.Path.Rectangle({
-            rectangle: new paper.Rectangle(
-                shape.topLeft.x,
-                shape.topLeft.y,
-                shape.size.width,
-                shape.size.height
-            ),
-            radius: shape.radius || 0
-        });
-    }
-
-    private createEllipse(shape: EllipseShape): paper.Path.Ellipse {
-        return new paper.Path.Ellipse({
-            center: new paper.Point(shape.center.x, shape.center.y),
-            radius: new paper.Size(shape.radius.width, shape.radius.height)
-        });
     }
 
     private createText(shape: TextShape): paper.PointText {

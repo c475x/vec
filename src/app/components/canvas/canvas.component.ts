@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 import { Subscription } from 'rxjs';
 import paper from 'paper';
 import { Tool } from '../../models/tool.enum';
-import { Shape, PathShape, RectangleShape, EllipseShape, TextShape, ImageShape, GroupShape, ShapeStyle } from '../../models/shape.model';
+import { Shape, PathShape, TextShape, ImageShape, GroupShape, ShapeStyle } from '../../models/shape.model';
 import { CanvasStore } from '../../services/canvas.store';
 import { ShapeRendererService } from '../../services/shape-renderer.service';
 import { SelectionRendererService, BoundingBoxConfig } from '../../services/selection-renderer.service';
@@ -463,20 +463,15 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
 
             case Tool.Rect: {
                 const style = this.store.activeStyle$.value;
-                const strokeColor = null; // no stroke preview for rect
+                const strokeColor = null;
                 const fillColor = style.fillEnabled && style.fill && typeof style.fill === 'string'
                     ? new paper.Color(style.fill)
                     : null;
 
-                // Create rectangle with minimal size 1x1
                 const rect = new paper.Rectangle(point, point.add(new paper.Point(1, 1)));
-                this.currentPath = new paper.Path.Rectangle({
-                    rectangle: rect,
-                    strokeColor,
-                    strokeWidth: style.strokeWidth || 2,
-                    fillColor
-                });
-                this.currentPath.data = { type: 'rectangle' };
+                this.currentPath = new paper.Path.Rectangle({ rectangle: rect, strokeColor, strokeWidth: style.strokeWidth || 2, fillColor });
+                // Mark as rectangle for corner radius support
+                this.currentPath.data = { cornerRadius: 0 };
                 this.mainLayer.addChild(this.currentPath);
                 break;
             }
@@ -495,7 +490,6 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
                     strokeWidth: style.strokeWidth || 2,
                     fillColor
                 });
-                this.currentPath.data = { type: 'ellipse' };
                 this.mainLayer.addChild(this.currentPath);
                 break;
             }
@@ -738,13 +732,7 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
                         const shape = shapes.find(s => s.id === id);
                         if (shape) {
                             const bounds = item.bounds;
-                            if (shape.type === 'rectangle') {
-                                (shape as RectangleShape).topLeft = new paper.Point(bounds.x, bounds.y);
-                                (shape as RectangleShape).size = new paper.Size(bounds.width, bounds.height);
-                            } else if (shape.type === 'ellipse') {
-                                (shape as EllipseShape).center = bounds.center;
-                                (shape as EllipseShape).radius = new paper.Size(bounds.width / 2, bounds.height / 2);
-                            } else if (shape.type === 'path') {
+                            if (shape.type === 'path') {
                                 const pathItem = item as paper.Path;
                                 // Assign segments directly to persist path shape
                                 (shape as PathShape).segments = pathItem.segments;
@@ -760,13 +748,7 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
                                 groupItem.children.forEach((childItem, idx) => {
                                     const childData = childrenData[idx];
                                     const bounds = childItem.bounds;
-                                    if (childData.type === 'rectangle') {
-                                        (childData as RectangleShape).topLeft = new paper.Point(bounds.x, bounds.y);
-                                        (childData as RectangleShape).size = new paper.Size(bounds.width, bounds.height);
-                                    } else if (childData.type === 'ellipse') {
-                                        (childData as EllipseShape).center = bounds.center;
-                                        (childData as EllipseShape).radius = new paper.Size(bounds.width / 2, bounds.height / 2);
-                                    } else if (childData.type === 'path') {
+                                    if (childData.type === 'path') {
                                         const pathItem = childItem as paper.Path;
                                         (childData as PathShape).segments = pathItem.segments;
                                         (childData as PathShape).closed = pathItem.closed;
@@ -971,28 +953,7 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
             fillEnabled: !!path.fillColor
         };
 
-        // Check the current tool to determine shape type
-        if (this.tool === Tool.Rect || path.data?.type === 'rectangle') {
-            const shape = {
-                id,
-                type: 'rectangle',
-                topLeft: { x: path.bounds.x, y: path.bounds.y },
-                size: { width: path.bounds.width, height: path.bounds.height },
-                style
-            } as RectangleShape;
-            return shape;
-        } else if (this.tool === Tool.Ellipse || path.data?.type === 'ellipse') {
-            const shape = {
-                id,
-                type: 'ellipse',
-                center: { x: path.bounds.center.x, y: path.bounds.center.y },
-                radius: { width: path.bounds.width / 2, height: path.bounds.height / 2 },
-                style
-            } as EllipseShape;
-            return shape;
-        }
-
-        // Default to path
+        // Always treat shapes as paths
         const shape = {
             id,
             type: 'path',
@@ -1004,6 +965,10 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
             closed: path.closed,
             style
         } as PathShape;
+        // Propagate corner radius for rectangle paths
+        if (path.data && (path.data.cornerRadius != null)) {
+            (shape as any).cornerRadius = path.data.cornerRadius;
+        }
         return shape;
     }
 
@@ -1167,34 +1132,6 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
             const s = shapes.find(sh => sh.id === id);
             if (!s) return;
             switch (s.type) {
-                case 'rectangle': {
-                    if (signX < 0) s.topLeft.x = oB.x + oB.width - newW;
-                    else s.topLeft.x = oB.x;
-                    s.size.width = newW;
-                    if (signY < 0) s.topLeft.y = oB.y + oB.height - newH;
-                    else s.topLeft.y = oB.y;
-                    s.size.height = newH;
-                    break;
-                }
-                case 'ellipse': {
-                    if (signX < 0) s.center.x = oB.x + oB.width - newW / 2;
-                    else s.center.x = oB.x + newW / 2;
-                    s.radius.width = newW / 2;
-                    if (signY < 0) s.center.y = oB.y + oB.height - newH / 2;
-                    else s.center.y = oB.y + newH / 2;
-                    s.radius.height = newH / 2;
-                    break;
-                }
-                case 'image': {
-                    // Resize image: update center position and size
-                    if (signX < 0) s.position.x = oB.x + oB.width - newW / 2;
-                    else s.position.x = oB.x + newW / 2;
-                    if (signY < 0) s.position.y = oB.y + oB.height - newH / 2;
-                    else s.position.y = oB.y + newH / 2;
-                    s.size.width = newW;
-                    s.size.height = newH;
-                    break;
-                }
                 case 'path': {
                     // Resize path: update model segments based on initial clone
                     const pathOrig = this.initialPaperItem!;
@@ -1215,6 +1152,16 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
                     (s as PathShape).closed = scaledPath.closed;
                     // Cleanup temporary path
                     scaledPath.remove();
+                    break;
+                }
+                case 'image': {
+                    // Resize image: update center position and size
+                    if (signX < 0) s.position.x = oB.x + oB.width - newW / 2;
+                    else s.position.x = oB.x + newW / 2;
+                    if (signY < 0) s.position.y = oB.y + oB.height - newH / 2;
+                    else s.position.y = oB.y + newH / 2;
+                    s.size.width = newW;
+                    s.size.height = newH;
                     break;
                 }
                 case 'group': {
@@ -1257,20 +1204,14 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
                 const scaled = origClone.clone({ insert: false });
                 scaled.scale(kx, ky, pivot);
                 // Commit based on shape type
-                if (s.type === 'rectangle') {
-                    s.topLeft = scaled.bounds.topLeft;
-                    s.size = scaled.bounds.size;
-                } else if (s.type === 'ellipse') {
-                    s.center = scaled.bounds.center;
-                    s.radius = new paper.Size(scaled.bounds.width / 2, scaled.bounds.height / 2);
-                } else if (s.type === 'image') {
-                    s.position = scaled.bounds.center;
-                    s.size = scaled.bounds.size;
-                } else if (s.type === 'path') {
+                if (s.type === 'path') {
                     // Scale path: update model segments and closed state
                     const scaledPath = scaled as paper.Path;
                     (s as PathShape).segments = scaledPath.segments;
                     (s as PathShape).closed = scaledPath.closed;
+                } else if (s.type === 'image') {
+                    s.position = scaled.bounds.center;
+                    s.size = scaled.bounds.size;
                 } else if (s.type === 'group') {
                     // Scale group by recursively updating nested children
                     this.commitResizedGroup(scaled as paper.Group, s as GroupShape);
@@ -1288,19 +1229,13 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
             if (!childModel) return;
             if (childModel.type === 'group') {
                 this.commitResizedGroup(childClone as paper.Group, childModel as GroupShape);
-            } else if (childModel.type === 'rectangle') {
-                (childModel as RectangleShape).topLeft = childClone.bounds.topLeft;
-                (childModel as RectangleShape).size = childClone.bounds.size;
-            } else if (childModel.type === 'ellipse') {
-                (childModel as EllipseShape).center = childClone.bounds.center;
-                (childModel as EllipseShape).radius = new paper.Size(childClone.bounds.width / 2, childClone.bounds.height / 2);
-            } else if (childModel.type === 'image') {
-                (childModel as ImageShape).position = childClone.bounds.center;
-                (childModel as ImageShape).size = childClone.bounds.size;
             } else if (childModel.type === 'path') {
                 const pathClone = childClone as paper.Path;
                 (childModel as PathShape).segments = pathClone.segments;
                 (childModel as PathShape).closed = pathClone.closed;
+            } else if (childModel.type === 'image') {
+                (childModel as ImageShape).position = childClone.bounds.center;
+                (childModel as ImageShape).size = childClone.bounds.size;
             }
         });
     }
