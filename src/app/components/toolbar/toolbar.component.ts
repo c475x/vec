@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 import { Tool } from '../../models/tool.enum';
 import { CanvasStore } from '../../services/canvas.store';
 import { ExportService } from '../../services/export.service';
-import { ImageShape, PathShape, GroupShape, ShapeStyle, Gradient } from '../../models/shape.model';
+import { ImageShape, PathShape, GroupShape, ShapeStyle, Gradient, GradientStop } from '../../models/shape.model';
 import paper from 'paper';
 
 @Component({
@@ -91,6 +91,42 @@ export class ToolbarComponent {
     }
 
     private importSVGText(svgText: string): void {
+        // Quick hack: parse <linearGradient> and <radialGradient> elements for stops
+        const gradMap: Record<string, Gradient> = {};
+        // Linear gradients
+        const linRe = /<linearGradient\s+id="([^"]+)"[^>]*>([\s\S]*?)<\/linearGradient>/g;
+        let linMatch: RegExpExecArray | null;
+        while (linMatch = linRe.exec(svgText)) {
+            const id = linMatch[1];
+            const content = linMatch[2];
+            const stops: GradientStop[] = [];
+            const stopRe = /<stop\s+offset="([^"]+)"\s+stop-color="([^"]+)"/g;
+            let stopMatch: RegExpExecArray | null;
+            while (stopMatch = stopRe.exec(content)) {
+                stops.push({ offset: parseFloat(stopMatch[1]), color: stopMatch[2] });
+            }
+            // fallback origin/destination, full width
+            gradMap[id] = { type: 'linear', stops, origin: new paper.Point(0, 0), destination: new paper.Point(1, 0) };
+        }
+        // Radial gradients
+        const radRe = /<radialGradient\s+id="([^"]+)"[^>]*>([\s\S]*?)<\/radialGradient>/g;
+        let radMatch: RegExpExecArray | null;
+        while (radMatch = radRe.exec(svgText)) {
+            const id = radMatch[1];
+            const content = radMatch[2];
+            const stops: GradientStop[] = [];
+            const stopRe = /<stop\s+offset="([^"]+)"\s+stop-color="([^"]+)"/g;
+            let stopMatch: RegExpExecArray | null;
+            while (stopMatch = stopRe.exec(content)) {
+                stops.push({ offset: parseFloat(stopMatch[1]), color: stopMatch[2] });
+            }
+            // fallback center and radius
+            gradMap[id] = { type: 'radial', stops, origin: new paper.Point(0.5, 0.5), radius: 0.5 };
+        }
+        // Parse SVG DOM for <path> fill attributes
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(svgText, 'application/xml');
+        const pathEls = Array.from(xmlDoc.querySelectorAll('path'));
         // Import SVG without inserting into DOM
         const item = paper.project.importSVG(svgText, { expandShapes: true, insert: false });
         // Collect all Path items
@@ -103,7 +139,6 @@ export class ToolbarComponent {
         // Remove imported item from project
         item.remove();
         // Convert each Path to our PathShape
-        // Grab active default style for fallback
         const activeDefault = this.store.activeStyle$.value;
         const shapes: PathShape[] = paths.map((path, idx) => {
             const segments = path.segments.map(seg => ({
@@ -111,14 +146,27 @@ export class ToolbarComponent {
                 handleIn: seg.handleIn && { x: seg.handleIn.x, y: seg.handleIn.y },
                 handleOut: seg.handleOut && { x: seg.handleOut.x, y: seg.handleOut.y }
             }));
-            // Build style: import only solid fills and strokes, no gradient support
-            const fillEnabled = !!path.fillColor;
-            const fillVal = path.fillColor ? path.fillColor.toCSS(true)! : undefined;
+            // Build style: read fill attribute from SVG element
+            const el = pathEls[idx];
+            const fillAttr = el?.getAttribute('fill');
+            let fill: string | Gradient | undefined;
+            let fillEnabled = false;
+            if (fillAttr) {
+                fillEnabled = true;
+                if (fillAttr.startsWith('url(')) {
+                    const m = fillAttr.match(/url\(#([^\)]+)\)/);
+                    if (m && gradMap[m[1]]) {
+                        fill = gradMap[m[1]];
+                    }
+                } else {
+                    fill = fillAttr;
+                }
+            }
             const style: ShapeStyle = {
                 stroke: path.strokeColor?.toCSS(true),
                 strokeEnabled: !!path.strokeColor,
                 strokeWidth: path.strokeWidth,
-                fill: fillVal,
+                fill,
                 fillEnabled,
                 opacity: path.opacity,
                 shadowBlur: path.shadowBlur,

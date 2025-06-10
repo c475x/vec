@@ -151,7 +151,7 @@
             <app-action-row label="Export as JPG" (action)="exportAs('jpg')"
                 [disabled]="false"></app-action-row>
             <app-action-row label="Export as SVG" (action)="exportAs('svg')"
-                [disabled]="(selectedIds$ | async)?.size !== 1"></app-action-row>
+                [disabled]="(selectedIds$ | async)?.size !== 1 || (singleShape$ | async)?.type === 'group'"></app-action-row>
         </app-section>
     </ng-container>
 </ng-container>

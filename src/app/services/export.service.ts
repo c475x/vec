@@ -178,6 +178,16 @@ export class ExportService {
     /** Export current selection (or all) as SVG */
     exportSVG(): void {
         console.debug('SVG Export: starting');
+        // Block export if exactly one group is selected
+        const selectedIds = this.store.selectedIds$.value;
+        if (selectedIds.size === 1) {
+            const singleId = Array.from(selectedIds)[0];
+            const singleShape = this.store.shapes$.value.find(s => s.id === singleId);
+            if (singleShape && singleShape.type === 'group') {
+                console.warn('SVG export disabled for group selection');
+                return;
+            }
+        }
         const shapes = this.store.shapes$.value;
         const sel = this.store.selectedIds$.value;
         // Determine shapes to export: if groups selected, flatten to their children
