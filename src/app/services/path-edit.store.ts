@@ -49,4 +49,4 @@ export class PathEditStore {
     clearEditing(): void {
         this.editingSegment$.next(null);
     }
-} 
+}

@@ -1,5 +1,6 @@
 import { Injectable } from '@angular/core';
 import { CanvasStore } from './canvas.store';
+import paper from 'paper';
 import { Tool } from '../models/tool.enum';
 
 @Injectable({ providedIn: 'root' })
@@ -174,9 +175,171 @@ export class ExportService {
         }, format === 'jpg' ? 'image/jpeg' : 'image/png');
     }
 
-    /** Placeholder for SVG export of current selection */
+    /** Export current selection (or all) as SVG */
     exportSVG(): void {
-        console.warn('SVG export not implemented');
+        console.debug('SVG Export: starting');
+        const shapes = this.store.shapes$.value;
+        const sel = this.store.selectedIds$.value;
+        // Determine shapes to export: if groups selected, flatten to their children
+        const rawShapes = sel.size > 0
+            ? shapes.filter(s => sel.has(s.id))
+            : shapes;
+        const exportShapes = rawShapes.flatMap(s =>
+            s.type === 'group'
+                ? (s as import('../models/shape.model').GroupShape).children
+                : [s]
+        );
+        // Compute bounds over exportShapes
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        exportShapes.forEach(s => {
+            if ((s as any).paperObject) {
+                const b = (s as any).paperObject.bounds as paper.Rectangle;
+                minX = Math.min(minX, b.x);
+                minY = Math.min(minY, b.y);
+                maxX = Math.max(maxX, b.x + b.width);
+                maxY = Math.max(maxY, b.y + b.height);
+            }
+        });
+        if (minX === Infinity) { minX = 0; minY = 0; maxX = 0; maxY = 0; }
+        const width = maxX - minX;
+        const height = maxY - minY;
+        console.debug('SVG Export: bounds', { minX, minY, width, height });
+        // Generate defs for gradients and shadows
+        let defs = '';
+        const gradIds = new Set<number>();
+        exportShapes.forEach(s => {
+            if (s.type === 'path' && s.style.fill && typeof s.style.fill !== 'string' && !(s.style.fill as any).gradient) {
+                // domain gradient
+                const g = s.style.fill as any;
+                const gid = 'grad' + s.id;
+                if (!gradIds.has(s.id)) {
+                    gradIds.add(s.id);
+                    if (g.type === 'linear') {
+                        const x1 = minX + g.origin.x * width;
+                        const y1 = minY + g.origin.y * height;
+                        const x2 = minX + g.destination.x * width;
+                        const y2 = minY + g.destination.y * height;
+                        defs += `<linearGradient id="${gid}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" gradientUnits="userSpaceOnUse">`;
+                        g.stops.forEach((stop: any) => {
+                            defs += `<stop offset="${stop.offset}" stop-color="${stop.color}" />`;
+                        });
+                        defs += `</linearGradient>`;
+                    } else if (g.type === 'radial') {
+                        const cx = minX + g.origin.x * width;
+                        const cy = minY + g.origin.y * height;
+                        const r = g.radius;
+                        defs += `<radialGradient id="${gid}" cx="${cx}" cy="${cy}" r="${r}" gradientUnits="userSpaceOnUse">`;
+                        g.stops.forEach((stop: any) => {
+                            defs += `<stop offset="${stop.offset}" stop-color="${stop.color}" />`;
+                        });
+                        defs += `</radialGradient>`;
+                    }
+                }
+            }
+            // Add shadow filter definitions
+            const blur = s.style.shadowBlur ?? 0;
+            const off = s.style.shadowOffset ?? { x: 0, y: 0 };
+            if (blur > 0 || off.x !== 0 || off.y !== 0) {
+                const color = s.style.shadowColor ?? '#000';
+                const opacity = s.style.shadowOpacity ?? 1;
+                const sid = 'shadow' + s.id;
+                defs += `<filter id="${sid}" x="-50%" y="-50%" width="200%" height="200%"><feDropShadow dx="${off.x}" dy="${off.y}" stdDeviation="${blur}" flood-color="${color}" flood-opacity="${opacity}"/></filter>`;
+            }
+        });
+        if (defs) {
+            defs = `<defs>${defs}</defs>`;
+        }
+        // Build shape markup
+        const shapeMarkup = exportShapes.map(s => {
+            console.debug('SVG Export: shape', s);
+            switch (s.type) {
+                case 'path': {
+                    const p = s as import('../models/shape.model').PathShape;
+                    // build d
+                    let d = '';
+                    p.segments.forEach((seg, i) => {
+                        const pt = seg.point;
+                        if (i === 0) {
+                            d += `M ${pt.x - minX} ${pt.y - minY}`;
+                        } else {
+                            const prev = p.segments[i - 1];
+                            if (prev.handleOut || seg.handleIn) {
+                                // compute control points manually (plain objects) instead of using .add()
+                                const cp1 = prev.handleOut
+                                    ? { x: prev.point.x + prev.handleOut.x, y: prev.point.y + prev.handleOut.y }
+                                    : { x: prev.point.x, y: prev.point.y };
+                                const cp2 = seg.handleIn
+                                    ? { x: pt.x + seg.handleIn.x, y: pt.y + seg.handleIn.y }
+                                    : { x: pt.x, y: pt.y };
+                                d += ` C ${cp1.x - minX} ${cp1.y - minY}, ${cp2.x - minX} ${cp2.y - minY}, ${pt.x - minX} ${pt.y - minY}`;
+                            } else {
+                                d += ` L ${pt.x - minX} ${pt.y - minY}`;
+                            }
+                        }
+                    });
+                    if (p.closed) {
+                        // emit closing bezier curve back to first segment
+                        const firstSeg = p.segments[0];
+                        const prevSeg = p.segments[p.segments.length - 1];
+                        // control point 1 from prevSeg.handleOut
+                        const c1 = prevSeg.handleOut
+                            ? { x: prevSeg.point.x + prevSeg.handleOut.x, y: prevSeg.point.y + prevSeg.handleOut.y }
+                            : { x: prevSeg.point.x, y: prevSeg.point.y };
+                        // control point 2 from firstSeg.handleIn
+                        const c2 = firstSeg.handleIn
+                            ? { x: firstSeg.point.x + firstSeg.handleIn.x, y: firstSeg.point.y + firstSeg.handleIn.y }
+                            : { x: firstSeg.point.x, y: firstSeg.point.y };
+                        d += ` C ${c1.x - minX} ${c1.y - minY}, ${c2.x - minX} ${c2.y - minY}, ${firstSeg.point.x - minX} ${firstSeg.point.y - minY}`;
+                        d += ' Z';
+                    }
+                    const style = p.style;
+                    const fill = typeof style.fill === 'string'
+                        ? style.fill
+                        : style.fill && !(style.fill as any).gradient
+                            ? `url(#grad${s.id})`
+                            : 'none';
+                    const stroke = style.strokeEnabled && style.stroke ? style.stroke : 'none';
+                    const strokeWidth = style.strokeWidth || 1;
+                    const opacity = style.opacity != null ? style.opacity : 1;
+                    // attach shadow filter if present
+                    const hasShadow = (style.shadowBlur ?? 0) > 0 || (style.shadowOffset?.x ?? 0) !== 0 || (style.shadowOffset?.y ?? 0) !== 0;
+                    const filterAttr = hasShadow ? ` filter="url(#shadow${s.id})"` : '';
+                    return `<path d="${d}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}" opacity="${opacity}"${filterAttr}/>`;
+                }
+                case 'text': {
+                    const t = s as import('../models/shape.model').TextShape;
+                    const x = t.position.x - minX;
+                    const y = t.position.y - minY;
+                    const style = t.style;
+                    const hasShadowT = (style.shadowBlur ?? 0) > 0 || (style.shadowOffset?.x ?? 0) !== 0 || (style.shadowOffset?.y ?? 0) !== 0;
+                    const filterT = hasShadowT ? ` filter="url(#shadow${s.id})"` : '';
+                    return `<text x="${x}" y="${y}" font-family="${t.fontFamily}" font-size="${t.fontSize}" fill="${t.style.fill}" opacity="${t.style.opacity}"${filterT}>${t.content}</text>`;
+                }
+                case 'image': {
+                    const img = s as import('../models/shape.model').ImageShape;
+                    const x = img.position.x - img.size.width/2 - minX;
+                    const y = img.position.y - img.size.height/2 - minY;
+                    console.debug('SVG Export: image', img.source, x, y, img.size.width, img.size.height);
+                    const styleI = img.style;
+                    const hasShadowI = (styleI.shadowBlur ?? 0) > 0 || (styleI.shadowOffset?.x ?? 0) !== 0 || (styleI.shadowOffset?.y ?? 0) !== 0;
+                    const filterI = hasShadowI ? ` filter="url(#shadow${s.id})"` : '';
+                    return `<image href="${img.source}" x="${x}" y="${y}" width="${img.size.width}" height="${img.size.height}"${filterI}/>`;
+                }
+                default:
+                    return '';
+            }
+        }).join('');
+        // Build SVG
+        const vecComment = '<!-- created with vec -->\n';
+        const svgOpen = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">\n`;
+        const prettyDefs = defs ? defs.replace(/></g, '>\n  <') + '\n' : '';
+        const prettyShapes = shapeMarkup.replace(/></g, '>\n  <') + '\n';
+        const svg = vecComment + svgOpen + prettyDefs + prettyShapes + '</svg>';
+        const cleanedSvg = svg.replace(/<</g, '<');
+        console.debug('SVG Export: cleaned svg markup:', cleanedSvg);
+        const blob = new Blob([cleanedSvg], { type: 'image/svg+xml' });
+        const filename = `vec-export-${new Date().toISOString().replace(/[:.]/g, '-')}.svg`;
+        this.downloadBlob(blob, filename);
     }
 
     /** Download a blob as a file */

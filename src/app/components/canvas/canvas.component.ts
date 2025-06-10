@@ -829,15 +829,9 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
             textIds.forEach(id => {
                 // Debug: model position before commit
                 const model = this.store.shapes$.value.find(s => s.id === id);
-                if (model && model.type === 'text') {
-                    console.log('[Text Model Debug] id=', id, 'model.position=', (model as TextShape).position);
-                }
                 const initPos = this.initialPositions.get(id);
                 let cloneItem: any = null;
                 this.selectedItems.forEach(it => { if (it.shapeId === id) cloneItem = it; });
-                if (cloneItem) {
-                    console.log(`[Text Move Debug] id=${id}`, 'initialPos=', initPos, 'clonePos=', cloneItem.position, 'boundsCenter=', cloneItem.bounds.center);
-                }
             });
         }
         if (this.movingItem) {
@@ -874,7 +868,6 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
                                     }
                                 });
                             } else if (shape.type === 'text') {
-                                // Commit text move: use clone position as text origin
                                 (shape as TextShape).position = (item as paper.PointText).position.clone();
                             }
                         }
@@ -1154,6 +1147,22 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
             }
             event.preventDefault();
         }
+
+        // Enter key toggles Path Edit mode
+        if (event.key === 'Enter' && !event.repeat) {
+            if (this.pathEditActive) {
+                this.store.exitPathEdit();
+            } else if (this.store.selectedIds$.value.size === 1) {
+                const selId = Array.from(this.store.selectedIds$.value)[0];
+                const shape = this.store.shapes$.value.find(s => s.id === selId && s.type === 'path');
+                if (shape) {
+                    this.store.enterPathEdit();
+                }
+            }
+            this.updateCanvas();
+            event.preventDefault();
+            return;
+        }
     }
 
     @HostListener('window:resize')
@@ -1258,6 +1267,12 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
             // Track Path Edit mode changes
             this.store.pathEditMode$.subscribe(active => {
                 this.pathEditActive = active;
+                if (!active) {
+                    // clear hover outlines upon exiting path edit mode
+                    this.hoveredItem = null;
+                    this.hoveredPathSegmentIndex = null;
+                    this.hoveredPathHandleType = null;
+                }
                 this.updateCanvas();
             }),
             // Exit Path Edit mode on any selection change
@@ -1435,7 +1450,7 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
             clientY >= rect.top && clientY <= rect.bottom;
         if (!inside) {
             this.comments.splice(idx, 1);
-            console.log(`Deleted comment ${id} (dropped outside). Remaining IDs:`, this.comments.map(cm => cm.id));
+            // console.log(`Deleted comment ${id} (dropped outside). Remaining IDs:`, this.comments.map(cm => cm.id));
         }
     }
 
