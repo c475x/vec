@@ -8,6 +8,7 @@ import { CanvasStore } from '../../services/canvas.store';
 import { ShapeRendererService } from '../../services/shape-renderer.service';
 import { SelectionRendererService, BoundingBoxConfig } from '../../services/selection-renderer.service';
 import { CommentOverlayComponent } from '../comment-overlay/comment-overlay.component';
+import { PathEditStore, EditingSegment } from '../../services/path-edit.store';
 
 interface PaperItemWithId extends paper.Item {
     shapeId?: number;
@@ -35,6 +36,12 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
 
     // Public wrapper methods for DOM events
     public onMouseDown(event: MouseEvent): void {
+        // Path Edit Mode: intercept mouse down
+        if (this.store.pathEditMode$.value) {
+            const toolEvent = this.createToolEvent(event, 'mousedown');
+            this.handlePathEditMouseDown(toolEvent);
+            return;
+        }
         // Comment tool: create new comment marker and switch to Move
         if (this.tool === Tool.Comment) {
             const pt = this.getPoint(event);
@@ -80,6 +87,16 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
     }
 
     public onMouseMove(event: MouseEvent): void {
+        // Path Edit Mode: intercept mouse move/drag and hover
+        if (this.store.pathEditMode$.value) {
+            const toolEvent = this.createToolEvent(event, 'mousemove');
+            if (event.buttons === 1) {
+                this.handlePathEditMouseDrag(toolEvent);
+            } else {
+                this.handlePathEditMouseMove(toolEvent);
+            }
+            return;
+        }
         if (!this.project?.view) return;
 
         const toolEvent = this.createToolEvent(event, 'mousemove');
@@ -91,6 +108,12 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
     }
 
     public onMouseUp(event: MouseEvent): void {
+        // Path Edit Mode: intercept mouse up
+        if (this.store.pathEditMode$.value) {
+            const toolEvent = this.createToolEvent(event, 'mouseup');
+            this.handlePathEditMouseUp(toolEvent);
+            return;
+        }
         // Skip default handling for Text tool
         if (this.tool === Tool.Text) {
             return;
@@ -167,8 +190,23 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
     private initialShapesCopy: Map<number, Shape> = new Map();
     // Map of shapeId to cloned Paper.js item (path or group) for multi-resize
     private initialPaperItemsMap: Map<number, paper.Item> = new Map();
+    // Path edit mode flag
+    private pathEditActive: boolean = false;
 
-    constructor(private store: CanvasStore, private renderer: ShapeRendererService, private selectionRenderer: SelectionRendererService) {}
+    // Currently editing segment/handle info
+    private editingSegment: EditingSegment | null = null;
+    // Hovered segment index for visual highlight
+    private hoveredPathSegmentIndex: number | null = null;
+
+    // Hovered handle type for path-edit mode
+    private hoveredPathHandleType: 'point' | 'handleIn' | 'handleOut' | null = null;
+
+    constructor(
+        private store: CanvasStore,
+        private renderer: ShapeRendererService,
+        private selectionRenderer: SelectionRendererService,
+        private pathEditStore: PathEditStore
+    ) {}
 
     ngAfterViewInit(): void {
         // Setup canvas
@@ -224,19 +262,35 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
         this.paperTool = new paper.Tool();
 
         this.paperTool.onMouseDown = (event: paper.ToolEvent) => {
-            this.handleMouseDown(event);
+            if (this.pathEditActive) {
+                this.handlePathEditMouseDown(event);
+            } else {
+                this.handleMouseDown(event);
+            }
         };
 
         this.paperTool.onMouseDrag = (event: paper.ToolEvent) => {
-            this.handleMouseDrag(event);
+            if (this.pathEditActive) {
+                this.handlePathEditMouseDrag(event);
+            } else {
+                this.handleMouseDrag(event);
+            }
         };
 
         this.paperTool.onMouseMove = (event: paper.ToolEvent) => {
-            this.handleMouseMove(event);
+            if (this.pathEditActive) {
+                this.handlePathEditMouseMove(event);
+            } else {
+                this.handleMouseMove(event);
+            }
         };
 
         this.paperTool.onMouseUp = (event: paper.ToolEvent) => {
-            this.handleMouseUp(event);
+            if (this.pathEditActive) {
+                this.handlePathEditMouseUp(event);
+            } else {
+                this.handleMouseUp(event);
+            }
         };
 
         // Activate the tool
@@ -244,6 +298,11 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
     }
 
     private handleMouseDown(event: paper.ToolEvent): void {
+        // Block default move/resize/draw when in Path Edit mode
+        if (this.pathEditActive) {
+            this.handlePathEditMouseDown(event);
+            return;
+        }
         // console.log('handleMouseDown at', event.point);
         this.hasDragged = false;
         const point = event.point;
@@ -543,6 +602,11 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
     }
 
     private handleMouseDrag(event: paper.ToolEvent): void {
+        // Block default drag when in Path Edit mode
+        if (this.pathEditActive) {
+            this.handlePathEditMouseDrag(event);
+            return;
+        }
         const point = event.point;
         const delta = event.delta;
         if (this.movingItem) this.hasDragged = true;
@@ -671,6 +735,11 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
     }
 
     private handleMouseUp(event: paper.ToolEvent): void {
+        // Block default up when in Path Edit mode
+        if (this.pathEditActive) {
+            this.handlePathEditMouseUp(event);
+            return;
+        }
         // console.log('[canvas] handleMouseUp start, tool:', this.tool, 'selectedIds:', Array.from(this.store.selectedIds$.value));
         if (this.marqueeActive && this.marqueeStart && this.marqueeEnd) {
             const x1 = Math.min(this.marqueeStart.x, this.marqueeEnd.x);
@@ -913,6 +982,9 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
     }
 
     private updateSelection(): void {
+        if (this.pathEditActive) {
+            return;
+        }
         // Delegate selection rendering to service
         this.selectionRenderer.renderSelection(
             this.selectionLayer,
@@ -922,6 +994,25 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
     }
 
     private updateCanvas(): void {
+        // Path Edit mode: only draw shapes and path-edit handles
+        if (this.pathEditActive) {
+            const shapes = this.store.shapes$.value;
+            this.mainLayer.removeChildren();
+            this.guideLayer.removeChildren();
+            this.selectionLayer.removeChildren();
+            shapes.forEach(shape => {
+                if (this.store.hideComments$.value && shape.type === 'text') return;
+                const item = this.renderer.createPaperItem(shape);
+                if (item) {
+                    (item as PaperItemWithId).shapeId = shape.id;
+                    shape.paperObject = item;
+                    this.mainLayer.addChild(item);
+                }
+            });
+            this.renderPathEditHandles();
+            this.project.view.update();
+            return;
+        }
         if (this.previewClones && this.previewClones.length > 0) {
             // Preview move: hide only originals of selected shapes, leave others visible
             const selIds = new Set<number>(this.previewClones.map(c => c.shapeId!));
@@ -966,7 +1057,7 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
         });
 
         // Render selection visuals (skip during move)
-        if (!this.movingItem) {
+        if (!this.movingItem && !this.pathEditActive) {
             this.selectionRenderer.renderSelection(this.selectionLayer, this.selectedItems, this.boundingBoxConfig as BoundingBoxConfig);
         }
 
@@ -976,8 +1067,13 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
         }
 
         // Hover outline (skip if disabled)
-        if (!this.store.hideHover$.value && this.tool === Tool.Move && !this.movingItem && !this.resizingItem && !this.resizingMultiple && this.selectedItems.size <= 1) {
+        if (!this.store.hideHover$.value && this.tool === Tool.Move && !this.movingItem && !this.resizingItem && !this.resizingMultiple && this.selectedItems.size <= 1 && !this.pathEditActive) {
             this.selectionRenderer.renderHover(this.guideLayer, this.hoveredItem, this.boundingBoxConfig as BoundingBoxConfig);
+        }
+
+        // Render path-edit handles when in edit mode
+        if (this.pathEditActive) {
+            this.renderPathEditHandles();
         }
 
         // --- Preview for currentPath (pen, rect, ellipse) ---
@@ -1158,6 +1254,22 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
             this.store.activeStyle$.subscribe(() => {
                 // console.log('Active style changed, updating canvas');
                 this.updateCanvas();
+            }),
+            // Track Path Edit mode changes
+            this.store.pathEditMode$.subscribe(active => {
+                this.pathEditActive = active;
+                this.updateCanvas();
+            }),
+            // Exit Path Edit mode on any selection change
+            this.store.selectedIds$.subscribe(() => {
+                if (this.pathEditActive) {
+                    this.store.exitPathEdit();
+                }
+            }),
+            // Track current editing segment from store
+            this.pathEditStore.editingSegment$.subscribe(editing => {
+                this.editingSegment = editing;
+                this.renderPathEditHandles();
             })
         );
     }
@@ -1324,6 +1436,149 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
         if (!inside) {
             this.comments.splice(idx, 1);
             console.log(`Deleted comment ${id} (dropped outside). Remaining IDs:`, this.comments.map(cm => cm.id));
+        }
+    }
+
+    // Path Editing helpers (stubs)
+    private handlePathEditMouseDown(event: paper.ToolEvent): void {
+        const idx = this.hoveredPathSegmentIndex;
+        const type = this.hoveredPathHandleType;
+        if (idx == null || type == null) return;
+        const item = Array.from(this.selectedItems)[0] as PaperItemWithId;
+        const shapeId = item.shapeId!;
+        this.pathEditStore.selectSegment(shapeId, idx, type);
+        // Disable rectangle cornerRadius if present
+        this.store.updateShapes(shapes => {
+            const s = shapes.find(sh => sh.id === shapeId && sh.type === 'path') as any;
+            if (s && s.cornerRadius !== undefined) delete s.cornerRadius;
+        });
+        event.preventDefault();
+    }
+    private handlePathEditMouseDrag(event: paper.ToolEvent): void {
+        this.pathEditStore.updateSegment(event.point);
+        this.renderPathEditHandles();
+    }
+    private handlePathEditMouseUp(event: paper.ToolEvent): void {
+        this.pathEditStore.clearEditing();
+        this.renderPathEditHandles();
+    }
+    /** Render visual handles for path editing mode */
+    private renderPathEditHandles(): void {
+        this.guideLayer.removeChildren();
+        if (!this.pathEditActive || this.selectedItems.size !== 1) return;
+        const item = Array.from(this.selectedItems)[0] as paper.Path;
+        const path = item;
+        const normalRadius = this.boundingBoxConfig.handleSize / 2;
+        const hoverRadius = this.boundingBoxConfig.handleSize; // full size on hover
+        path.segments.forEach((seg, idx) => {
+            const pt = seg.point;
+            // Main anchor
+            const isHoverPoint = (this.hoveredPathSegmentIndex === idx && this.hoveredPathHandleType === 'point');
+            const r = isHoverPoint ? hoverRadius : normalRadius;
+            const circle = new paper.Path.Circle({
+                center: pt,
+                radius: r,
+                fillColor: new paper.Color('white'), // anchor fill white
+                strokeColor: new paper.Color(this.boundingBoxConfig.strokeColor),
+                strokeWidth: this.boundingBoxConfig.handleStrokeWidth,
+                data: { segmentIndex: idx, handleType: 'point' }
+            });
+            this.guideLayer.addChild(circle);
+            // Bezier handleIn
+            if (seg.handleIn) {
+                // Draw line to handleIn
+                const inLine = new paper.Path.Line({
+                    from: pt,
+                    to: seg.point.add(seg.handleIn),
+                    strokeColor: new paper.Color(this.boundingBoxConfig.strokeColor),
+                    strokeWidth: 1
+                });
+                this.guideLayer.addChild(inLine);
+                const inPt = pt.add(seg.handleIn);
+                const isIn = (this.hoveredPathSegmentIndex === idx && this.hoveredPathHandleType === 'handleIn');
+                const rIn = isIn ? hoverRadius : normalRadius;
+                const inCircle = new paper.Path.Circle({ center: inPt, radius: rIn, fillColor: new paper.Color(this.boundingBoxConfig.strokeColor), strokeColor: new paper.Color(this.boundingBoxConfig.strokeColor), strokeWidth: this.boundingBoxConfig.handleStrokeWidth, data: { segmentIndex: idx, handleType: 'handleIn' } });
+                this.guideLayer.addChild(inCircle);
+            }
+            // Bezier handleOut
+            if (seg.handleOut) {
+                // Draw line to handleOut
+                const outLine = new paper.Path.Line({
+                    from: pt,
+                    to: seg.point.add(seg.handleOut),
+                    strokeColor: new paper.Color(this.boundingBoxConfig.strokeColor),
+                    strokeWidth: 1
+                });
+                this.guideLayer.addChild(outLine);
+                const outPt = pt.add(seg.handleOut);
+                const isOut = (this.hoveredPathSegmentIndex === idx && this.hoveredPathHandleType === 'handleOut');
+                const rOut = isOut ? hoverRadius : normalRadius;
+                const outCircle = new paper.Path.Circle({ center: outPt, radius: rOut, fillColor: new paper.Color(this.boundingBoxConfig.strokeColor), strokeColor: new paper.Color(this.boundingBoxConfig.strokeColor), strokeWidth: this.boundingBoxConfig.handleStrokeWidth, data: { segmentIndex: idx, handleType: 'handleOut' } });
+                this.guideLayer.addChild(outCircle);
+            }
+        });
+    }
+    private handlePathEditMouseMove(event: paper.ToolEvent): void {
+        const pt = event.point;
+        let foundIdx: number | null = null;
+        let foundType: 'point' | 'handleIn' | 'handleOut' | null = null;
+        // Priority: detect point handles first
+        for (const child of this.guideLayer.children) {
+            const data = (child.data as any);
+            if (data?.handleType === 'point' && child.bounds.contains(pt)) {
+                foundIdx = data.segmentIndex;
+                foundType = 'point';
+                break;
+            }
+        }
+        // Then handleIn
+        if (foundIdx == null) {
+            for (const child of this.guideLayer.children) {
+                const data = (child.data as any);
+                if (data?.handleType === 'handleIn' && child.bounds.contains(pt)) {
+                    foundIdx = data.segmentIndex;
+                    foundType = 'handleIn';
+                    break;
+                }
+            }
+        }
+        // Then handleOut
+        if (foundIdx == null) {
+            for (const child of this.guideLayer.children) {
+                const data = (child.data as any);
+                if (data?.handleType === 'handleOut' && child.bounds.contains(pt)) {
+                    foundIdx = data.segmentIndex;
+                    foundType = 'handleOut';
+                    break;
+                }
+            }
+        }
+        this.hoveredPathSegmentIndex = foundIdx;
+        this.hoveredPathHandleType = foundType;
+        this.renderPathEditHandles();
+    }
+
+    @HostListener('window:dblclick', ['$event'])
+    private handlePathEditDoubleClick(event: MouseEvent): void {
+        const pt = this.getPoint(event);
+        if (!this.pathEditActive) {
+            // Enter edit mode if double-clicking inside selected path
+            const selIds = this.store.selectedIds$.value;
+            if (selIds.size === 1) {
+                const item = Array.from(this.selectedItems)[0] as paper.Path;
+                if (item && item.bounds.contains(pt)) {
+                    this.store.enterPathEdit();
+                    this.updateCanvas();
+                    event.preventDefault();
+                }
+            }
+        } else {
+            // Exit edit mode if double-clicking outside selected path
+            const item = Array.from(this.selectedItems)[0] as paper.Path | undefined;
+            if (!item || !item.bounds.contains(pt)) {
+                this.store.exitPathEdit();
+                this.updateCanvas();
+            }
         }
     }
 } 

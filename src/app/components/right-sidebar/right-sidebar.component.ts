@@ -27,6 +27,8 @@ import { ExportService } from '../../services/export.service';
     styleUrls: ['./right-sidebar.component.scss']
 })
 export class RightSidebarComponent {
+    // Path edit mode observable
+    pathEditMode$!: Observable<boolean>;
     shapes$!: Observable<Shape[]>;
     selectedIds$!: Observable<Set<number>>;
     activeStyle$!: Observable<ShapeStyle>;
@@ -46,6 +48,7 @@ export class RightSidebarComponent {
     canvasH$!: Observable<number>;
 
     constructor(public store: CanvasStore, private exportService: ExportService) {
+        this.pathEditMode$ = this.store.pathEditMode$;
         this.shapes$ = this.store.shapes$;
         this.selectedIds$ = this.store.selectedIds$;
         this.activeStyle$ = this.store.activeStyle$;
@@ -324,5 +327,13 @@ export class RightSidebarComponent {
     /** Open file picker and import shapes from JSON */
     importJSON(): void {
         this.exportService.importJSON();
+    }
+
+    onPathEditToggle(): void {
+        if (this.store.pathEditMode$.value) {
+            this.store.exitPathEdit();
+        } else {
+            this.store.enterPathEdit();
+        }
     }
 }

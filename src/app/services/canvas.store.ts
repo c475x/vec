@@ -27,6 +27,9 @@ export class CanvasStore {
     /* Active tool (needed by sidebar to show/hide relevant options) */
     readonly activeTool$ = new BehaviorSubject<Tool>(Tool.Move);
 
+    /* Path editing mode flag */
+    readonly pathEditMode$ = new BehaviorSubject<boolean>(false);
+
     /* Whether to hide comments (needed for export) */
     hideComments$ = new BehaviorSubject<boolean>(false);
 
@@ -49,6 +52,16 @@ export class CanvasStore {
 
     setActiveTool(t: Tool): void {
         this.activeTool$.next(t);
+    }
+
+    /** Enter path editing mode */
+    enterPathEdit(): void {
+        this.pathEditMode$.next(true);
+    }
+
+    /** Exit path editing mode */
+    exitPathEdit(): void {
+        this.pathEditMode$.next(false);
     }
 
     /* ────────── Selection ────────── */

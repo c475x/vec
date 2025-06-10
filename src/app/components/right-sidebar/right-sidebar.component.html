@@ -67,6 +67,14 @@
 
                 <!-- Actions -->
                 <app-section title="Actions">
+                    <!-- Path editing toggle for single path shapes -->
+                    <ng-container *ngIf="shape.type === 'path'">
+                        <app-action-row
+                            [label]="(pathEditMode$ | async) ? 'Exit path editing mode' : 'Enter path editing mode'"
+                            (action)="onPathEditToggle()">
+                        </app-action-row>
+                    </ng-container>
+                    
                     <app-action-row label="Group" (action)="store.groupSelected()"
                         [disabled]="!(canGroup$ | async)"></app-action-row>
                     <app-action-row label="Ungroup" (action)="store.ungroupSelected()"
