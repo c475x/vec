@@ -23,6 +23,11 @@ export class PropertyRowComponent implements OnChanges {
 
     @ViewChild('inputEl', { static: false }) inputEl!: ElementRef<HTMLInputElement>;
 
+    /** Whether the current value is a string (for text editing) */
+    get isString(): boolean {
+        return typeof this.value === 'string';
+    }
+
     ngOnChanges(changes: SimpleChanges): void {
         if (changes['value'] && !this.editing) {
             this.displayValue = this.value;
@@ -42,27 +47,45 @@ export class PropertyRowComponent implements OnChanges {
     }
 
     finishEdit(): void {
-        // если snapshot триггера отличается от текущего - другая фигура была выделена при изменении значения
+        if (this.isString) {
+            // Always emit new string value
+            this.valueChange.emit(this.displayValue);
+            return;
+        }
+        // if snapshot trigger differs from current - another shape was selected while editing
         if (this.resetTrigger !== this.lastResetTrigger) {
             this.cancelEdit();
-            // console.log(`[property-row] edit cancelled for ${this.label} due to trigger mismatch`);
             return;
         }
         if (this.editing) {
             this.editing = false;
             this.valueChange.emit(this.displayValue);
-            // console.log(`[property-row] valueChange emitted for ${this.label} =`, this.displayValue);
-            // console.log(`[property-row] resetTrigger: ${this.resetTrigger}, lastResetTrigger: ${this.lastResetTrigger}`);
         }
     }
 
     onKeydown(e: KeyboardEvent): void {
-        if (e.key === 'Enter') this.finishEdit();
-        if (e.key === 'Escape') this.cancelEdit();
+        // Prevent non-numeric characters when editing numeric value
+        if (!this.isString) {
+            const allowedControlKeys = ['Backspace','Tab','Enter','Escape','ArrowLeft','ArrowRight','Home','End','Delete'];
+            const isNumericChar = /^[0-9\.\-]$/.test(e.key);
+            if (!isNumericChar && !allowedControlKeys.includes(e.key)) {
+                e.preventDefault();
+                e.stopPropagation();
+                return;
+            }
+        }
+        if (e.key === 'Enter') {
+            this.finishEdit();
+            this.inputEl.nativeElement.blur();
+        }
+        if (e.key === 'Escape') {
+            this.cancelEdit();
+            this.inputEl.nativeElement.blur();
+        }
         e.stopPropagation();
     }
 
-    // отформатированное значение для отображения
+    // formatted value for display
     get formattedValue(): string {
         const raw = typeof this.displayValue === 'string'
             ? parseFloat(this.displayValue)

@@ -1,11 +1,21 @@
 <div class="property-row">
     <span class="label">{{ label }}</span>
-    <div class="value-container" (click)="!editing && startEdit()">
-        <ng-container *ngIf="!editing; else editTpl">
-            <span class="value">{{ formattedValue }}{{ unit || '' }}</span>
+    <div class="value-container" [class.editable]="!isString" (click)="!isString && !editing && startEdit()">
+        <ng-container *ngIf="isString">
+            <input #inputEl type="text" [value]="displayValue"
+                (focus)="startEdit()"
+                (input)="displayValue = $any($event.target).value"
+                (blur)="finishEdit()" (keydown)="onKeydown($event)" />
+        </ng-container>
+        <ng-container *ngIf="!isString">
+            <ng-container *ngIf="!editing; else editTpl">
+                <span class="value">{{ formattedValue }}{{ unit || '' }}</span>
+            </ng-container>
         </ng-container>
         <ng-template #editTpl>
-            <input #inputEl [value]="displayValue" (input)="displayValue = $any($event.target).value"
+            <input #inputEl [value]="displayValue"
+                (focus)="startEdit()"
+                (input)="displayValue = $any($event.target).value"
                 (blur)="finishEdit()" (keydown)="onKeydown($event)" />
             <span class="unit">{{ unit }}</span>
         </ng-template>

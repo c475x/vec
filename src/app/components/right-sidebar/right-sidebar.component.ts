@@ -10,6 +10,7 @@ import { CanvasStore } from '../../services/canvas.store';
 import { Observable, combineLatest } from 'rxjs';
 import { map } from 'rxjs/operators';
 import { Shape, ShapeStyle, GroupShape, PathShape } from '../../models/shape.model';
+import { ExportService } from '../../services/export.service';
 
 @Component({
     selector: 'app-right-sidebar',
@@ -44,7 +45,7 @@ export class RightSidebarComponent {
     canvasW$!: Observable<number>;
     canvasH$!: Observable<number>;
 
-    constructor(public store: CanvasStore) {
+    constructor(public store: CanvasStore, private exportService: ExportService) {
         this.shapes$ = this.store.shapes$;
         this.selectedIds$ = this.store.selectedIds$;
         this.activeStyle$ = this.store.activeStyle$;
@@ -78,6 +79,7 @@ export class RightSidebarComponent {
                 if (!s) return 0;
                 if (s.type === 'path') return (s.paperObject?.bounds.x ?? 0);
                 if (s.type === 'image') return (s.position.x - s.size.width / 2);
+                if (s.type === 'text') return (s.position.x);
                 return 0;
             })
         );
@@ -86,6 +88,7 @@ export class RightSidebarComponent {
                 if (!s) return 0;
                 if (s.type === 'path') return (s.paperObject?.bounds.y ?? 0);
                 if (s.type === 'image') return (s.position.y - s.size.height / 2);
+                if (s.type === 'text') return (s.position.y);
                 return 0;
             })
         );
@@ -218,6 +221,11 @@ export class RightSidebarComponent {
                         }
                         break;
                     }
+                    case 'text': {
+                        if (prop === 'x') (shape as any).position.x = val;
+                        if (prop === 'y') (shape as any).position.y = val;
+                        break;
+                    }
                 }
             });
         });
@@ -246,6 +254,15 @@ export class RightSidebarComponent {
         );
         const x = currentShape?.style?.shadowOffset?.x ?? 0;
         this.onStyleChange({ shadowOffset: { x, y: value } });
+    }
+
+    // Text properties handlers
+    onTextContentChange(value: string | number): void {
+        this.store.updateTextProps({ content: String(value) });
+    }
+
+    onTextPropChange(patch: Partial<{ content: string; fontSize: number }>): void {
+        this.store.updateTextProps(patch);
     }
 
     // Handle corner radius change for rectangle-like paths (PathShapes)
@@ -328,5 +345,18 @@ export class RightSidebarComponent {
         } else {
             this.store.sendToBack();
         }
+    }
+
+    /** Export shapes to JSON, skipping images; selection only if any selected */
+    exportJSON(): void {
+        const shapes = this.store.selectedIds$.value.size
+            ? this.store.shapes$.value.filter(s => this.store.selectedIds$.value.has(s.id))
+            : this.store.shapes$.value;
+        this.exportService.exportJSON(shapes);
+    }
+
+    /** Open JSON file picker and import shapes */
+    importJSON(): void {
+        this.exportService.importJSON();
     }
 }

@@ -14,7 +14,8 @@
             {{ text }}
         </div>
         <!-- Editing: multiline input -->
-        <textarea #editor *ngIf="editing"
+        <textarea #editor
+                  *ngIf="editing"
                   [(ngModel)]="text"
                   (input)="autoGrow($event)"
                   (keydown)="onKeyDown($event)"

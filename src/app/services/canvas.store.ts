@@ -30,6 +30,13 @@ export class CanvasStore {
     /* Whether to hide comments (needed for export) */
     hideComments$ = new BehaviorSubject<boolean>(false);
 
+    /* Active text properties for new shapes or selected text shapes */
+    readonly activeTextProps$ = new BehaviorSubject<{ fontFamily: string; fontSize: number; justification: string }>({
+        fontFamily: 'SF Pro Text',
+        fontSize: 20,
+        justification: 'left'
+    });
+
     /* ────────── Helpers ────────── */
     updateShapes(mutator: (arr: Shape[]) => void): void {
         const copy = [...this.shapes$.value];
@@ -176,7 +183,7 @@ export class CanvasStore {
                         // Clone ImageShape with proper Point and Size instances
                         const im = s as any as ImageShape;
                         clone = {
-                            id: Date.now() + Math.random(),
+                            id: Date.now() + Math.random(), // FIXME: prevent duplicate ids (migrate to uuid?)
                             type: 'image',
                             source: im.source,
                             position: new paper.Point(im.position.x + offset, im.position.y + offset),
@@ -270,5 +277,28 @@ export class CanvasStore {
             const others = arr.filter(s => !ids.has(s.id));
             arr.splice(0, arr.length, ...selected, ...others);
         });
+    }
+
+    /** Update text properties (content, font, size, justification) for selected text shapes or active defaults */
+    updateTextProps(patch: Partial<{ content: string; fontFamily: string; fontSize: number; justification: string }>): void {
+        const sel = this.selectedIds$.value;
+        if (sel.size) {
+            this.updateShapes(arr => {
+                arr.forEach(sh => {
+                    if (sel.has(sh.id) && sh.type === 'text') {
+                        // Merge text property patch
+                        Object.assign(sh, patch);
+                    }
+                });
+            });
+        } else {
+            // Update active defaults for new text shapes
+            const current = this.activeTextProps$.value;
+            this.activeTextProps$.next({
+                fontFamily: patch.fontFamily ?? current.fontFamily,
+                fontSize: patch.fontSize ?? current.fontSize,
+                justification: patch.justification ?? current.justification
+            });
+        }
     }
 }

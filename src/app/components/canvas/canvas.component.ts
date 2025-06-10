@@ -49,6 +49,25 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
             this.toolChange.emit(this.tool);
             return;
         }
+        // Text tool: create new text shape and open for editing
+        if (this.tool === Tool.Text) {
+            const pt = this.getPoint(event);
+            const style = this.store.activeStyle$.value;
+            const textProps = this.store.activeTextProps$.value;
+            const newShape: TextShape = {
+                id: Date.now(),
+                type: 'text',
+                content: '',
+                position: new paper.Point(pt.x, pt.y),
+                fontSize: textProps.fontSize,
+                fontFamily: textProps.fontFamily,
+                justification: textProps.justification,
+                style: { ...style, strokeEnabled: false }
+            };
+            this.store.updateShapes(shapes => shapes.push(newShape));
+            this.store.select(newShape.id);
+            return;
+        }
         // Clear marquee selection when starting a new action
         this.marqueeActive = false;
         this.marqueeStart = null;
@@ -72,6 +91,10 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
     }
 
     public onMouseUp(event: MouseEvent): void {
+        // Skip default handling for Text tool
+        if (this.tool === Tool.Text) {
+            return;
+        }
         if (!this.project?.view) return;
 
         const toolEvent = this.createToolEvent(event, 'mouseup');
@@ -723,8 +746,33 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
             }
         }
         // Commit moving changes to the store before clearing state
+        // Debug: log cursor movement delta and final position for text shapes
+        {
+            // Debug: cursor movement delta
+            if (this.dragStartPoint) {
+                const upPoint = event.point;
+                const delta = upPoint.subtract(this.dragStartPoint);
+                console.log('[Cursor Delta Debug]', 'downPoint=', this.dragStartPoint, 'upPoint=', upPoint, 'delta=', delta);
+            }
+            const textIds = Array.from(this.store.selectedIds$.value).filter(id => {
+                const sh = this.store.shapes$.value.find(s => s.id === id);
+                return sh?.type === 'text';
+            });
+            textIds.forEach(id => {
+                // Debug: model position before commit
+                const model = this.store.shapes$.value.find(s => s.id === id);
+                if (model && model.type === 'text') {
+                    console.log('[Text Model Debug] id=', id, 'model.position=', (model as TextShape).position);
+                }
+                const initPos = this.initialPositions.get(id);
+                let cloneItem: any = null;
+                this.selectedItems.forEach(it => { if (it.shapeId === id) cloneItem = it; });
+                if (cloneItem) {
+                    console.log(`[Text Move Debug] id=${id}`, 'initialPos=', initPos, 'clonePos=', cloneItem.position, 'boundsCenter=', cloneItem.bounds.center);
+                }
+            });
+        }
         if (this.movingItem) {
-            // console.log('[canvas] commit move start');
             this.store.updateShapes(shapes => {
                 this.selectedItems.forEach(item => {
                     const id = item.shapeId;
@@ -757,12 +805,14 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
                                         (childData as ImageShape).size = new paper.Size(bounds.width, bounds.height);
                                     }
                                 });
+                            } else if (shape.type === 'text') {
+                                // Commit text move: use clone position as text origin
+                                (shape as TextShape).position = (item as paper.PointText).position.clone();
                             }
                         }
                     }
                 });
             });
-            // console.log('[canvas] commit move end, models:', this.store.shapes$.value.filter(s => this.store.selectedIds$.value.has(s.id)));
         }
 
         // Clean up preview clones

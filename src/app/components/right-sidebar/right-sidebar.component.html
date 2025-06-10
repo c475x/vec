@@ -39,7 +39,7 @@
                     <app-action-row label="Ungroup" (action)="store.ungroupSelected()"
                         [disabled]="!(canUngroup$ | async)"></app-action-row>
                     <app-action-row label="Duplicate" (action)="store.duplicateSelected()"
-                        [disabled]="sel.size === 0"></app-action-row>
+                        [disabled]="shape.type === 'group' || sel.size === 0"></app-action-row>
                     <app-action-row label="Merge paths" (action)="store.mergePaths()"
                         [disabled]="!(canMerge$ | async)"></app-action-row>
                     <app-action-row label="Bring to front" (action)="onBringToFront($event)"
@@ -57,10 +57,12 @@
                         (valueChange)="onPositionChange('x', +$event)"></app-property-row>
                     <app-property-row label="Y" [value]="(canvasY$ | async) ?? 0" unit="px"
                         (valueChange)="onPositionChange('y', +$event)"></app-property-row>
-                    <app-property-row label="Width" [value]="(canvasW$ | async) ?? 0" unit="px"
-                        (valueChange)="onPositionChange('w', +$event)"></app-property-row>
-                    <app-property-row label="Height" [value]="(canvasH$ | async) ?? 0" unit="px"
-                        (valueChange)="onPositionChange('h', +$event)"></app-property-row>
+                    <ng-container *ngIf="shape.type !== 'text'">
+                        <app-property-row label="Width" [value]="(canvasW$ | async) ?? 0" unit="px"
+                            (valueChange)="onPositionChange('w', +$event)"></app-property-row>
+                        <app-property-row label="Height" [value]="(canvasH$ | async) ?? 0" unit="px"
+                            (valueChange)="onPositionChange('h', +$event)"></app-property-row>
+                    </ng-container>
                 </app-section>
 
                 <!-- Actions -->
@@ -70,7 +72,7 @@
                     <app-action-row label="Ungroup" (action)="store.ungroupSelected()"
                         [disabled]="!(canUngroup$ | async)"></app-action-row>
                     <app-action-row label="Duplicate" (action)="store.duplicateSelected()"
-                        [disabled]="sel.size === 0"></app-action-row>
+                        [disabled]="shape.type !== 'path' || sel.size === 0"></app-action-row>
                     <app-action-row label="Merge paths" (action)="store.mergePaths()"
                         [disabled]="!(canMerge$ | async)"></app-action-row>
                     <app-action-row label="Bring to front" (action)="onBringToFront($event)"
@@ -78,6 +80,17 @@
                     <app-action-row label="Send to back" (action)="onSendToBack($event)"
                         [disabled]="!(canReorder$ | async)"></app-action-row>
                 </app-section>
+
+                <!-- Text Properties -->
+                <ng-container *ngIf="shape.type === 'text'">
+                    <app-section title="Typography">
+                        <app-property-row label="Text" [value]="shape.content" [resetTrigger]="shape.id"
+                            (valueChange)="onTextContentChange($event)"></app-property-row>
+                        <app-property-row label="Size" [value]="shape.fontSize ?? 16" unit="px"
+                            (valueChange)="onTextPropChange({ fontSize: +$event })"></app-property-row>
+                        <!-- Convert to Path functionality removed -->
+                    </app-section>
+                </ng-container>
 
                 <!-- Style -->
                 <app-section title="Style">
@@ -130,6 +143,10 @@
             <app-action-row label="Export as JPG" (action)="exportAs('jpg')"
                 [disabled]="false"></app-action-row>
             <app-action-row label="Export as SVG" (action)="exportAs('svg')"
+                [disabled]="false"></app-action-row>
+            <app-action-row label="Export JSON" (action)="exportJSON()"
+                [disabled]="false"></app-action-row>
+            <app-action-row label="Import JSON" (action)="importJSON()"
                 [disabled]="false"></app-action-row>
         </app-section>
     </ng-container>

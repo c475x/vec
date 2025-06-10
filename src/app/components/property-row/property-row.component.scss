@@ -22,7 +22,10 @@
         display: flex;
         justify-content: flex-end;
         align-items: center;
-        cursor: text;
+        cursor: default;
+        &.editable {
+            cursor: text;
+        }
     }
 
     .value {
