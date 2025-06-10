@@ -135,6 +135,11 @@ export class ToolbarComponent {
             if (style.fillEnabled && style.fill == null) {
                 style.fill = activeDefault.fill;
             }
+            // Ensure default shadow settings for imported shapes
+            style.shadowColor = style.shadowColor ?? activeDefault.shadowColor;
+            style.shadowBlur = style.shadowBlur ?? activeDefault.shadowBlur;
+            style.shadowOffset = style.shadowOffset ?? activeDefault.shadowOffset;
+            style.shadowOpacity = style.shadowOpacity ?? activeDefault.shadowOpacity;
             return { id: Date.now() + idx, type: 'path', segments, closed: path.closed, style } as PathShape;
         });
         if (!shapes.length) return;

@@ -5,3 +5,15 @@
     background: #1c1c1e;
     touch-action: none;
 }
+
+/* Ensure wrapper and canvas fill container */
+.canvas-wrapper {
+    position: relative;
+    width: 100%;
+    height: 100%;
+}
+.drawing-canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+}

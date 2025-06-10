@@ -1,8 +1,23 @@
-<canvas
-    #canvas
-    class="drawing-canvas"
-    (mousedown)="onMouseDown($event)"
-    (mousemove)="onMouseMove($event)"
-    (mouseup)="onMouseUp($event)"
-    (mouseleave)="onMouseMove($event)">
-</canvas>
+<div class="canvas-wrapper">
+    <canvas
+        #canvas
+        class="drawing-canvas"
+        (mousedown)="onMouseDown($event)"
+        (mousemove)="onMouseMove($event)"
+        (mouseup)="onMouseUp($event)"
+        (mouseleave)="onMouseMove($event)">
+    </canvas>
+    <!-- Comment overlays -->
+    <app-comment-overlay *ngFor="let comment of comments"
+        [id]="comment.id"
+        [x]="comment.x"
+        [y]="comment.y"
+        [text]="comment.text"
+        [time]="comment.time"
+        [editing]="comment.editing"
+        (moved)="onCommentMove(comment.id, $event)"
+        (textChange)="onCommentEdit(comment.id, $event)"
+        (deleted)="onCommentDelete($event)"
+        (dragEnd)="onCommentDragEnd($event)">
+    </app-comment-overlay>
+</div>

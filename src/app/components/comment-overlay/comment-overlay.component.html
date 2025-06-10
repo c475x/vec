@@ -1,0 +1,27 @@
+<div class="comment-overlay" [ngStyle]="{ left: x + 'px', top: y + 'px' }">
+    <div class="comment-marker" (mousedown)="onMarkerMouseDown($event)"
+         (mouseenter)="onMouseEnter()" (mouseleave)="onMouseLeave()"></div>
+    <div class="comment-tooltip" [class.visible]="showTooltip || editing"
+         (mouseenter)="onMouseEnter()" (mouseleave)="onMouseLeave()"
+         (click)="!editing && onTextClick()">
+        <!-- Header: time (left) and delete (right) -->
+        <div class="comment-header" *ngIf="!editing">
+            <span class="comment-time">{{ time }}</span>
+            <button class="delete-btn" (click)="onDelete($event)">×</button>
+        </div>
+        <!-- Body: display text -->
+        <div class="comment-body select" *ngIf="!editing">
+            {{ text }}
+        </div>
+        <!-- Editing: multiline input -->
+        <textarea #editor
+                  *ngIf="editing"
+                  [(ngModel)]="text"
+                  (input)="autoGrow($event)"
+                  (keydown)="onKeyDown($event)"
+                  (blur)="onTextBlur()"
+                  class="comment-input"
+                  maxlength="256">
+        </textarea>
+    </div>
+</div> 

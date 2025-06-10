@@ -1,4 +1,5 @@
 import { AfterViewInit, Component, ElementRef, HostListener, Input, Output, ViewChild, OnDestroy, EventEmitter, OnChanges, SimpleChanges } from '@angular/core';
+import { CommonModule } from '@angular/common';
 import { Subscription } from 'rxjs';
 import paper from 'paper';
 import { Tool } from '../../models/tool.enum';
@@ -6,18 +7,26 @@ import { Shape, PathShape, RectangleShape, EllipseShape, TextShape, ImageShape, 
 import { CanvasStore } from '../../services/canvas.store';
 import { ShapeRendererService } from '../../services/shape-renderer.service';
 import { SelectionRendererService, BoundingBoxConfig } from '../../services/selection-renderer.service';
+import { CommentOverlayComponent } from '../comment-overlay/comment-overlay.component';
 
 interface PaperItemWithId extends paper.Item {
     shapeId?: number;
 }
 
+// Simple comment data
+interface CommentData { id: number; x: number; y: number; text: string; time: string; editing: boolean; }
+
 @Component({
     selector: 'app-canvas',
     standalone: true,
+    imports: [CommonModule, CommentOverlayComponent],
     templateUrl: './canvas.component.html',
     styleUrls: ['./canvas.component.scss'],
 })
 export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
+    // Comments overlay
+    public comments: CommentData[] = [];
+
     @Input() tool: Tool = Tool.Move;
     @Output() toolChange = new EventEmitter<Tool>();
 
@@ -26,6 +35,20 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
 
     // Public wrapper methods for DOM events
     public onMouseDown(event: MouseEvent): void {
+        // Comment tool: create new comment marker and switch to Move
+        if (this.tool === Tool.Comment) {
+            const pt = this.getPoint(event);
+            // Create timestamp
+            const now = new Date();
+            const hours = now.getHours().toString().padStart(2, '0');
+            const minutes = now.getMinutes().toString().padStart(2, '0');
+            const time = `${hours}:${minutes}`;
+            // Add comment with open input
+            this.comments.push({ id: Date.now(), x: pt.x, y: pt.y, text: '', time, editing: true });
+            this.tool = Tool.Move;
+            this.toolChange.emit(this.tool);
+            return;
+        }
         // Clear marquee selection when starting a new action
         this.marqueeActive = false;
         this.marqueeStart = null;
@@ -305,7 +328,6 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
                         this.mainLayer.insertChild(index, clone);
                         this.previewClones.push(clone);
                     });
-                    console.log('unified clone z-order (pre-select):', this.previewClones.map(c => c.index));
                     // Replace selectedItems with clones and update movingItem reference
                     const origMovingId = this.movingItem?.shapeId;
                     this.selectedItems.clear();
@@ -376,7 +398,6 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
                             this.mainLayer.insertChild(index, clone);
                             this.previewClones.push(clone);
                         });
-                        console.log('was item already selected: false/ z-order:', this.previewClones.map(c => c.index));
                         // Replace selectedItems with clones and update movingItem to clone
                         const origMovingId2 = this.movingItem?.shapeId;
                         this.selectedItems.clear();
@@ -633,7 +654,7 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
     }
 
     private handleMouseUp(event: paper.ToolEvent): void {
-        console.log('[canvas] handleMouseUp start, tool:', this.tool, 'selectedIds:', Array.from(this.store.selectedIds$.value));
+        // console.log('[canvas] handleMouseUp start, tool:', this.tool, 'selectedIds:', Array.from(this.store.selectedIds$.value));
         if (this.marqueeActive && this.marqueeStart && this.marqueeEnd) {
             const x1 = Math.min(this.marqueeStart.x, this.marqueeEnd.x);
             const y1 = Math.min(this.marqueeStart.y, this.marqueeEnd.y);
@@ -709,7 +730,7 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
         }
         // Commit moving changes to the store before clearing state
         if (this.movingItem) {
-            console.log('[canvas] commit move start');
+            // console.log('[canvas] commit move start');
             this.store.updateShapes(shapes => {
                 this.selectedItems.forEach(item => {
                     const id = item.shapeId;
@@ -759,7 +780,7 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
                     }
                 });
             });
-            console.log('[canvas] commit move end, models:', this.store.shapes$.value.filter(s => this.store.selectedIds$.value.has(s.id)));
+            // console.log('[canvas] commit move end, models:', this.store.shapes$.value.filter(s => this.store.selectedIds$.value.has(s.id)));
         }
 
         // Clean up preview clones
@@ -935,6 +956,8 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
             this.currentPath.bringToFront();
             this.currentPath.selected = false;
         }
+        // Force redraw to apply shadows and style changes
+        this.project.view.update();
     }
 
     private pathToShape(path: paper.Path): Shape {
@@ -1280,5 +1303,43 @@ export class CanvasComponent implements AfterViewInit, OnDestroy, OnChanges {
                 (childModel as PathShape).closed = pathClone.closed;
             }
         });
+    }
+
+    // Handle comment moved event
+    public onCommentMove(id: number, pos: { x: number; y: number }): void {
+        const c = this.comments.find(c => c.id === id);
+        if (c) { c.x = pos.x; c.y = pos.y; }
+    }
+    // Handle comment text edit or removal
+    public onCommentEdit(id: number, newText: string): void {
+        const idx = this.comments.findIndex(c => c.id === id);
+        if (idx === -1) return;
+        if (!newText.trim()) {
+            // Remove empty comment
+            this.comments.splice(idx, 1);
+        } else {
+            this.comments[idx].text = newText;
+            this.comments[idx].editing = false;
+        }
+    }
+
+    // Handle explicit deletion of comment
+    public onCommentDelete(id: number): void {
+        this.comments = this.comments.filter(c => c.id !== id);
+    }
+
+    // Handle end of drag: remove comment if cursor not on canvas at drop
+    public onCommentDragEnd(eventData: { id: number; clientX: number; clientY: number }): void {
+        const { id, clientX, clientY } = eventData;
+        const idx = this.comments.findIndex(c => c.id === id);
+        if (idx === -1) return;
+        const rect = this.canvasRef.nativeElement.getBoundingClientRect();
+        const inside =
+            clientX >= rect.left && clientX <= rect.right &&
+            clientY >= rect.top && clientY <= rect.bottom;
+        if (!inside) {
+            this.comments.splice(idx, 1);
+            console.log(`Deleted comment ${id} (dropped outside). Remaining IDs:`, this.comments.map(cm => cm.id));
+        }
     }
 } 

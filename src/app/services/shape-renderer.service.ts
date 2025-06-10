@@ -161,12 +161,25 @@ export class ShapeRendererService {
         } else {
             // Clear fill when disabled or absent
             item.fillColor = null;
+            // If shadow present and no fill, add transparent fill to trigger shadow render
+            if (style.shadowColor && style.shadowBlur !== undefined && style.shadowBlur > 0) {
+                const transFill = new paper.Color(style.shadowColor);
+                transFill.alpha = 0;
+                item.fillColor = transFill;
+            }
         }
         // Stroke (respect strokeEnabled flag)
         if (style.strokeEnabled && style.stroke) {
             item.strokeColor = new paper.Color(style.stroke);
         } else {
-            item.strokeColor = null;
+            // Clear stroke when disabled, but add transparent stroke if shadow present
+            if (style.shadowColor && style.shadowBlur !== undefined && style.shadowBlur > 0) {
+                const transStroke = new paper.Color(style.shadowColor);
+                transStroke.alpha = 0;
+                item.strokeColor = transStroke;
+            } else {
+                item.strokeColor = null;
+            }
         }
         // Stroke width
         if (style.strokeWidth !== undefined) {
